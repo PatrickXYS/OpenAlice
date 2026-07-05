@@ -12,11 +12,11 @@ export const configKeysHandlers = [
     HttpResponse.json({
       aiProvider: { apiKeys: {}, profiles: {}, activeProfile: '' },
       engine: {},
-      agent: { evolutionMode: false, claudeCode: {} },
+      agent: { allowAiTrading: false, claudeCode: {} },
       compaction: { maxContextTokens: 0, maxOutputTokens: 0 },
       snapshot: { enabled: false, every: '1h' },
       trading: { observeExternalOrdersEvery: '15m' },
-      mcp: { port: 47332 },
+      mcp: { enabled: false, port: 47332 },
       marketData: {
         enabled: true,
         providers: { equity: 'yfinance', crypto: 'yfinance', currency: 'yfinance', commodity: 'yfinance' },
@@ -39,8 +39,8 @@ export const configKeysHandlers = [
   http.get('/api/config/credentials', () =>
     HttpResponse.json({
       credentials: [
-        { slug: 'anthropic-1', vendor: 'anthropic', authType: 'api-key', wires: { anthropic: '' }, apiKey: null, hasApiKey: true },
-        { slug: 'openai-1', vendor: 'openai', authType: 'api-key', wires: { 'openai-responses': '', 'openai-chat': '' }, apiKey: null, hasApiKey: true },
+        { slug: 'anthropic-1', vendor: 'anthropic', label: 'Anthropic', authType: 'api-key', wires: { anthropic: '' }, apiKey: null, hasApiKey: true },
+        { slug: 'openai-1', vendor: 'openai', label: 'OpenAI', authType: 'api-key', wires: { 'openai-responses': '', 'openai-chat': '' }, apiKey: null, hasApiKey: true },
       ],
     }),
   ),
@@ -66,5 +66,16 @@ export const configKeysHandlers = [
   http.put('/api/config/workspace-credential-defaults', async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { defaults?: unknown }
     return HttpResponse.json({ defaults: body.defaults ?? {} })
+  }),
+
+  http.get('/api/config/workspace-default-agent', () => HttpResponse.json({ agent: 'claude' })),
+  http.put('/api/config/workspace-default-agent', async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { agent?: unknown }
+    return HttpResponse.json({ agent: typeof body.agent === 'string' ? body.agent : null })
+  }),
+  http.get('/api/config/issue-default-agent', () => HttpResponse.json({ agent: 'pi' })),
+  http.put('/api/config/issue-default-agent', async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { agent?: unknown }
+    return HttpResponse.json({ agent: typeof body.agent === 'string' ? body.agent : null })
   }),
 ]

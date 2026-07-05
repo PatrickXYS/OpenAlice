@@ -36,6 +36,8 @@ export function UrlAdopter() {
             /chat/:channelId (the retired traditional-chat channels) still
             redirects to Inbox so stale bookmarks land on a live surface. */}
         <Route path="/chat" element={<AdoptStatic spec={{ kind: 'chat-landing', params: {} }} />} />
+        <Route path="/chat/workspaces/:wsId" element={<AdoptChatWorkspace />} />
+        <Route path="/chat/workspaces/:wsId/s/:sessionId" element={<AdoptChatWorkspace />} />
         <Route path="/chat/:channelId" element={<Navigate to="/inbox" replace />} />
         <Route path="/portfolio" element={<AdoptStatic spec={{ kind: 'portfolio', params: {} }} />} />
         <Route path="/issues" element={<AdoptStatic spec={{ kind: 'issue', params: {} }} />} />
@@ -50,13 +52,13 @@ export function UrlAdopter() {
             but keep it above the dynamic route for readability. */}
         <Route path="/market/boards/:board" element={<AdoptMarketBoard />} />
         <Route path="/market/:assetClass/:symbol" element={<AdoptMarketDetail />} />
-        {/* /trading-as-git no longer creates a tab — sidebar-only activity. */}
-        <Route path="/trading-as-git" element={<SetSidebarOnly section="trading-as-git" />} />
+        <Route path="/trading-as-git" element={<AdoptStatic spec={{ kind: 'trading-as-git', params: {} }} />} />
 
         {/* Settings — one entry per category */}
         <Route path="/settings" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'general' } }} />} />
         <Route path="/settings/ai-provider" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'ai-provider' } }} />} />
         <Route path="/settings/trading" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'trading' } }} />} />
+        <Route path="/settings/issues" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'issues' } }} />} />
         <Route path="/settings/mcp" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'mcp' } }} />} />
         <Route path="/settings/market-data" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'market-data' } }} />} />
         <Route path="/settings/news-collector" element={<AdoptStatic spec={{ kind: 'settings', params: { category: 'news-collector' } }} />} />
@@ -75,20 +77,20 @@ export function UrlAdopter() {
 
         {/* Tracked (entity index) */}
         <Route path="/tracked" element={<AdoptStatic spec={{ kind: 'tracked', params: {} }} />} />
+        <Route path="/tracked/issues/:wsId/:id" element={<AdoptTrackedIssueDetail />} />
 
         {/* Workspaces */}
         <Route path="/workspaces" element={<AdoptStatic spec={{ kind: 'workspace-list', params: {} }} />} />
         {/* Template catalog routes must come before /workspaces/:wsId so the
-            static `templates` segment wins the match (it would otherwise
-            never collide — wsIds are UUIDs — but route specificity is the
-            defensive default). */}
+            static `templates` segment wins the match even if a workspace id is
+            a human-readable slug. */}
         <Route path="/workspaces/templates" element={<AdoptStatic spec={{ kind: 'template-catalog', params: {} }} />} />
         <Route path="/workspaces/templates/:name" element={<AdoptTemplateDetail />} />
         <Route path="/workspaces/:wsId/view/:path" element={<AdoptFileViewer />} />
         <Route path="/workspaces/:wsId" element={<AdoptWorkspace />} />
         <Route path="/workspaces/:wsId/s/:sessionId" element={<AdoptWorkspace />} />
 
-        {/* Legacy redirects — preserved from sections.tsx */}
+        {/* Legacy redirects */}
         <Route path="/logs" element={<Navigate to="/dev/logs" replace />} />
         <Route path="/events" element={<Navigate to="/dev/logs" replace />} />
         <Route path="/agent-status" element={<Navigate to="/dev/logs" replace />} />
@@ -165,6 +167,12 @@ function AdoptIssueDetail() {
   return <AdoptStatic spec={{ kind: 'issue-detail', params: { wsId, id } }} />
 }
 
+function AdoptTrackedIssueDetail() {
+  const { wsId, id } = useParams<{ wsId: string; id: string }>()
+  if (!wsId || !id) return <Navigate to="/tracked" replace />
+  return <AdoptStatic spec={{ kind: 'tracked-issue-detail', params: { wsId, id } }} />
+}
+
 function AdoptUtaDetail() {
   const { id } = useParams<{ id: string }>()
   if (!id) return <Navigate to="/settings/trading" replace />
@@ -202,7 +210,15 @@ function AdoptAutomation() {
 function AdoptWorkspace() {
   const { wsId, sessionId } = useParams<{ wsId: string; sessionId?: string }>()
   if (!wsId) return <Navigate to="/workspaces" replace />
-  const params: { wsId: string; sessionId?: string } = { wsId }
+  const params: Extract<ViewSpec, { kind: 'workspace' }>['params'] = { wsId }
+  if (sessionId) params.sessionId = sessionId
+  return <AdoptStatic spec={{ kind: 'workspace', params }} />
+}
+
+function AdoptChatWorkspace() {
+  const { wsId, sessionId } = useParams<{ wsId: string; sessionId?: string }>()
+  if (!wsId) return <Navigate to="/chat" replace />
+  const params: Extract<ViewSpec, { kind: 'workspace' }>['params'] = { wsId, source: 'chat' }
   if (sessionId) params.sessionId = sessionId
   return <AdoptStatic spec={{ kind: 'workspace', params }} />
 }
@@ -227,23 +243,9 @@ function RedirectUtaDetail() {
 }
 
 /**
- * Some activities have no tab kind (e.g. trading-as-git is sidebar-only).
- * Visiting their URL should just open the sidebar; no tab gets created.
- */
-function SetSidebarOnly({ section }: { section: import('./types').ActivitySection }) {
-  const setSidebar = useWorkspace((state) => state.setSidebar)
-  useEffect(() => {
-    setSidebar(section)
-  }, [section, setSidebar])
-  return null
-}
-
-/**
- * Map a ViewSpec to the ActivitySection whose sidebar should accompany
- * it. URL adoption uses this so a fresh page load / deep link / browser
- * back-forward lands on a screen with the matching sidebar already
- * open — otherwise `selectedSidebar` stays at whatever was persisted
- * (or null on first run), and the page renders without left context.
+ * Map a ViewSpec to the ActivitySection highlighted in the ActivityBar.
+ * Page-owned sidebars keep the highlight in sync while the app shell stays
+ * unaware of each surface's local navigation.
  *
  * `uta-detail` is intentionally Portfolio's sidebar: the URL lives
  * under /settings/uta/:id for historical reasons but the page is a
@@ -253,12 +255,14 @@ function specToSection(spec: ViewSpec): ActivitySection {
   switch (spec.kind) {
     case 'inbox':              return 'inbox'
     case 'tracked':            return 'tracked'
+    case 'tracked-issue-detail': return 'tracked'
     case 'chat-landing':       return 'chat'
-    case 'workspace':
+    case 'workspace':          return spec.params.source === 'chat' ? 'chat' : 'workspaces'
     case 'workspace-list':
     case 'template-catalog':
     case 'template-detail':
     case 'file-viewer':        return 'workspaces'
+    case 'trading-as-git':     return 'trading-as-git'
     case 'portfolio':
     case 'uta-detail':         return 'portfolio'
     case 'issue':
@@ -277,8 +281,8 @@ function specToSection(spec: ViewSpec): ActivitySection {
 /**
  * Compare focused tab against `spec` and openOrFocus only if different —
  * skips redundant store updates on every render. Also activates the
- * matching sidebar so URL-driven navigation (fresh load, deep link,
- * back-forward) lands with the expected left-rail context, not blank.
+ * matching ActivityBar section so URL-driven navigation (fresh load,
+ * deep link, back-forward) lands with the expected navigation context.
  */
 function useAdopt(spec: ViewSpec) {
   const openOrFocus = useWorkspace((state) => state.openOrFocus)

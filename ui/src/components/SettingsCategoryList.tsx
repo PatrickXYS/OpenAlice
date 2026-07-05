@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { SlidersHorizontal, Bot, CandlestickChart, Plug, LineChart, Newspaper } from 'lucide-react'
+import { SlidersHorizontal, Bot, CandlestickChart, ListChecks, Plug, LineChart, Newspaper } from 'lucide-react'
 import { useWorkspace } from '../tabs/store'
 import { getFocusedTab } from '../tabs/types'
 import { SidebarRow } from './SidebarRow'
@@ -8,6 +8,7 @@ const CATEGORIES = [
   { labelKey: 'settings.category.general',     category: 'general',        Icon: SlidersHorizontal },
   { labelKey: 'settings.category.aiProvider',  category: 'ai-provider',    Icon: Bot },
   { labelKey: 'settings.category.trading',     category: 'trading',        Icon: CandlestickChart },
+  { labelKey: 'settings.category.issues',      category: 'issues',         Icon: ListChecks },
   // Connectors moved to its own ActivityBar Legacy entry — see
   // ConnectorsLegacySidebar.
   { labelKey: 'settings.category.mcpServer',   category: 'mcp',            Icon: Plug },

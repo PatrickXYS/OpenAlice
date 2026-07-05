@@ -4,6 +4,8 @@ import {
   readCredentials, addCredential, deleteCredential, writeCredential, resolveCredential,
   credentialWires,
   readWorkspaceCredentialDefaults, writeWorkspaceCredentialDefaults,
+  readIssueDefaultAgent, writeIssueDefaultAgent,
+  readWorkspaceDefaultAgent, writeWorkspaceDefaultAgent,
   credentialVendorEnum, credentialWireShapeEnum,
   type ConfigSection, type Credential, type CredentialWireShape,
   type WorkspaceCredentialDefault,
@@ -69,6 +71,7 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
       const list = Object.entries(creds).map(([slug, cred]) => ({
         slug,
         vendor: cred.vendor,
+        ...(cred.label ? { label: cred.label } : {}),
         authType: cred.authType,
         wires: credentialWires(cred), // derives from legacy {baseUrl,wireShape} too
         apiKey: cred.apiKey ?? null,
@@ -83,16 +86,20 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
   /** POST /credentials — add an api-key credential (deduped by key). Returns slug. */
   app.post('/credentials', async (c) => {
     try {
-      const body = await c.req.json<{ vendor?: string; wires?: unknown; apiKey?: string }>()
+      const body = await c.req.json<{ vendor?: string; label?: string; wires?: unknown; apiKey?: string; lastModel?: string }>()
       const apiKey = body.apiKey?.trim()
       if (!apiKey) return c.json({ error: 'apiKey is required' }, 400)
       const vendorParse = credentialVendorEnum.safeParse(body.vendor)
+      const label = body.label?.trim()
+      const lastModel = body.lastModel?.trim()
       const wires = parseWires(body.wires)
       const cred: Credential = {
         vendor: vendorParse.success ? vendorParse.data : 'custom',
+        ...(label ? { label } : {}),
         authType: 'api-key',
         apiKey,
         ...(Object.keys(wires).length ? { wires } : {}),
+        ...(lastModel ? { lastModel } : {}),
       }
       const slug = await addCredential(cred)
       return c.json({ slug, vendor: cred.vendor }, 201)
@@ -105,16 +112,20 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
   app.put('/credentials/:slug', async (c) => {
     try {
       const slug = c.req.param('slug')
-      const body = await c.req.json<{ vendor?: string; wires?: unknown; apiKey?: string }>()
+      const body = await c.req.json<{ vendor?: string; label?: string; wires?: unknown; apiKey?: string; lastModel?: string }>()
       const existing = await resolveCredential(slug)
       const apiKey = body.apiKey?.trim() || existing.apiKey
       const vendorParse = credentialVendorEnum.safeParse(body.vendor)
+      const label = body.label?.trim()
+      const lastModel = body.lastModel?.trim() || existing.lastModel
       const wires = parseWires(body.wires)
       const cred: Credential = {
         vendor: vendorParse.success ? vendorParse.data : existing.vendor,
+        ...(label || existing.label ? { label: label || existing.label } : {}),
         authType: 'api-key',
         ...(apiKey ? { apiKey } : {}),
         ...(Object.keys(wires).length ? { wires } : { ...(existing.wires ? { wires: existing.wires } : {}) }),
+        ...(lastModel ? { lastModel } : {}),
       }
       await writeCredential(slug, cred)
       return c.json({ slug })
@@ -211,6 +222,48 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
       }
       await writeWorkspaceCredentialDefaults(next)
       return c.json({ defaults: next })
+    } catch (err) {
+      return c.json({ error: String(err) }, 400)
+    }
+  })
+
+  app.get('/workspace-default-agent', async (c) => {
+    try {
+      return c.json({ agent: await readWorkspaceDefaultAgent() })
+    } catch (err) {
+      return c.json({ error: String(err) }, 500)
+    }
+  })
+
+  app.put('/workspace-default-agent', async (c) => {
+    try {
+      const body = await c.req.json<{ agent?: string | null }>()
+      const agent = typeof body.agent === 'string' && DEFAULTABLE_AGENTS.includes(body.agent as typeof DEFAULTABLE_AGENTS[number])
+        ? body.agent
+        : null
+      await writeWorkspaceDefaultAgent(agent)
+      return c.json({ agent })
+    } catch (err) {
+      return c.json({ error: String(err) }, 400)
+    }
+  })
+
+  app.get('/issue-default-agent', async (c) => {
+    try {
+      return c.json({ agent: await readIssueDefaultAgent() })
+    } catch (err) {
+      return c.json({ error: String(err) }, 500)
+    }
+  })
+
+  app.put('/issue-default-agent', async (c) => {
+    try {
+      const body = await c.req.json<{ agent?: string | null }>()
+      const agent = typeof body.agent === 'string' && DEFAULTABLE_AGENTS.includes(body.agent as typeof DEFAULTABLE_AGENTS[number])
+        ? body.agent
+        : null
+      await writeIssueDefaultAgent(agent)
+      return c.json({ agent })
     } catch (err) {
       return c.json({ error: String(err) }, 400)
     }

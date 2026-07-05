@@ -198,44 +198,12 @@ describe('codexAdapter AI-config', () => {
 describe('opencodeAdapter AI-config', () => {
   const mcpEnv = { OPENALICE_MCP_URL: 'http://127.0.0.1:47332/mcp', AQ_WS_ID: 'ws-abc' };
 
-  it('injects both MCP servers + hermetic flags via composeEnv inline config', () => {
+  it('keeps OpenAlice MCP out of opencode env even when an MCP URL is present', () => {
     const env = opencodeAdapter.composeEnv!({ cwd: dir, env: mcpEnv });
     expect(env['OPENCODE_DISABLE_MODELS_FETCH']).toBe('1');
     expect(env['OPENCODE_DISABLE_AUTOUPDATE']).toBe('1');
     expect(env['OPENCODE_DISABLE_LSP_DOWNLOAD']).toBe('1');
-    expect(JSON.parse(env['OPENCODE_CONFIG_CONTENT']!)).toEqual({
-      mcp: {
-        openalice: { type: 'remote', url: 'http://127.0.0.1:47332/mcp', enabled: true },
-        'openalice-workspace': {
-          type: 'remote', url: 'http://127.0.0.1:47332/mcp/ws-abc', enabled: true,
-        },
-      },
-    });
-  });
-
-  it('stamps x-openalice-run on the workspace server when AQ_RUN_ID is present (headless)', () => {
-    const env = opencodeAdapter.composeEnv!({ cwd: dir, env: { ...mcpEnv, AQ_RUN_ID: 'run-7' } });
-    const cfg = JSON.parse(env['OPENCODE_CONFIG_CONTENT']!);
-    expect(cfg.mcp['openalice-workspace'].headers).toEqual({ 'x-openalice-run': 'run-7' });
-    // never on the global server
-    expect(cfg.mcp.openalice.headers).toBeUndefined();
-  });
-
-  it('stamps x-openalice-session on the workspace server when AQ_SESSION_ID is present (interactive)', () => {
-    const env = opencodeAdapter.composeEnv!({ cwd: dir, env: { ...mcpEnv, AQ_SESSION_ID: 'rec-9' } });
-    const cfg = JSON.parse(env['OPENCODE_CONFIG_CONTENT']!);
-    expect(cfg.mcp['openalice-workspace'].headers).toEqual({ 'x-openalice-session': 'rec-9' });
-    expect(cfg.mcp.openalice.headers).toBeUndefined();
-  });
-
-  it('run header wins when both are present (mutually exclusive, matching the shim)', () => {
-    const env = opencodeAdapter.composeEnv!({ cwd: dir, env: { ...mcpEnv, AQ_RUN_ID: 'run-7', AQ_SESSION_ID: 'rec-9' } });
-    const cfg = JSON.parse(env['OPENCODE_CONFIG_CONTENT']!);
-    expect(cfg.mcp['openalice-workspace'].headers).toEqual({ 'x-openalice-run': 'run-7' });
-  });
-
-  it('composeEnv throws loud when MCP url is missing from spawn env', () => {
-    expect(() => opencodeAdapter.composeEnv!({ cwd: dir, env: {} })).toThrow(/OPENALICE_MCP_URL/);
+    expect(env['OPENCODE_CONFIG_CONTENT']).toBeUndefined();
   });
 
   it('composeCommand: fresh is the bare binary; resume uses top-level flags', () => {
@@ -264,6 +232,16 @@ describe('opencodeAdapter AI-config', () => {
     });
   });
 
+  it('writes an explicit custom-model context window for opencode when provided', async () => {
+    await opencodeAdapter.writeAiConfig!(dir, {
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-o', model: 'deepseek-chat', contextWindow: 1_000_000,
+    });
+    expect(JSON.parse(await read('opencode.json')).provider.workspace.models['deepseek-chat']).toEqual({
+      name: 'deepseek-chat',
+      limit: { context: 1_000_000, output: 16_384 },
+    });
+  });
+
   it('honors wireShape — anthropic → @ai-sdk/anthropic, responses → @ai-sdk/openai', async () => {
     await opencodeAdapter.writeAiConfig!(dir, { baseUrl: 'https://x/anthropic', apiKey: 'k', model: 'glm-5.1', wireShape: 'anthropic' });
     expect(JSON.parse(await read('opencode.json')).provider.workspace.npm).toBe('@ai-sdk/anthropic');
@@ -279,10 +257,10 @@ describe('opencodeAdapter AI-config', () => {
 
   it('round-trips through readAiConfig (strips the provider/ prefix off model)', async () => {
     await opencodeAdapter.writeAiConfig!(dir, {
-      baseUrl: 'https://cn.test/v1', apiKey: 'sk-o', model: 'deepseek-chat',
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-o', model: 'deepseek-chat', contextWindow: 512_000,
     });
     expect(await opencodeAdapter.readAiConfig!(dir)).toEqual({
-      baseUrl: 'https://cn.test/v1', apiKey: 'sk-o', model: 'deepseek-chat', wireShape: 'openai-chat',
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-o', model: 'deepseek-chat', wireShape: 'openai-chat', contextWindow: 512_000,
     });
   });
 
@@ -347,7 +325,7 @@ describe('composeHeadlessCommand (one-shot headless argv, prompt placed per-CLI)
     ]);
   });
 
-  it('opencode: run --format json -- <prompt> (MCP via env, not flags)', () => {
+  it('opencode: run --format json -- <prompt> (tools via CLI shims)', () => {
     expect(opencodeAdapter.composeHeadlessCommand!(['opencode'], ctx(), 'do x')).toEqual([
       'opencode',
       'run',
@@ -427,6 +405,15 @@ describe('piAdapter AI-config', () => {
     });
   });
 
+  it('writes an explicit custom-model context window for Pi when provided', async () => {
+    await piAdapter.writeAiConfig!(dir, {
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat', contextWindow: 1_000_000,
+    });
+    expect(JSON.parse(await read('.pi-agent/models.json')).providers.workspace.models).toEqual([
+      { id: 'deepseek-chat', contextWindow: 1_000_000 },
+    ]);
+  });
+
   it('honors wireShape — anthropic → anthropic-messages, responses → openai-responses', async () => {
     await piAdapter.writeAiConfig!(dir, { baseUrl: 'https://x/anthropic', apiKey: 'k', model: 'glm-5.1', wireShape: 'anthropic' });
     expect(JSON.parse(await read('.pi-agent/models.json')).providers.workspace.api).toBe('anthropic-messages');
@@ -442,10 +429,10 @@ describe('piAdapter AI-config', () => {
 
   it('round-trips through readAiConfig', async () => {
     await piAdapter.writeAiConfig!(dir, {
-      baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat',
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat', contextWindow: 256_000,
     });
     expect(await piAdapter.readAiConfig!(dir)).toEqual({
-      baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat', wireShape: 'openai-chat',
+      baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat', wireShape: 'openai-chat', contextWindow: 256_000,
     });
   });
 

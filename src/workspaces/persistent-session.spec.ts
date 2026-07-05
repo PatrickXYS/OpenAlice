@@ -152,4 +152,83 @@ describe('PersistentSession backpressure / socket-drop deadlock', () => {
 
     session.dispose('test');
   });
+
+  it('writes browser stdin binary frames to the PTY byte-for-byte', () => {
+    const session = new PersistentSession(makeOptions());
+    const ws = new FakeWs();
+    session.attach(ws as never, 80, 24, undefined);
+
+    const input = Buffer.from('，。\n', 'utf8');
+    ws.emit('message', input, true);
+
+    expect(term.write).toHaveBeenCalledTimes(1);
+    const written = term.write.mock.calls[0]?.[0];
+    expect(Buffer.isBuffer(written)).toBe(true);
+    expect(Buffer.compare(written as Buffer, input)).toBe(0);
+
+    session.dispose('test');
+  });
+});
+
+describe('PersistentSession controller lease', () => {
+  let term: ReturnType<typeof makeFakeTerm>;
+
+  beforeEach(() => {
+    term = makeFakeTerm();
+    mockSpawn.mockReturnValue(term as unknown as pty.IPty);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects a second controller without kicking the current controller', () => {
+    const session = new PersistentSession(makeOptions());
+    const ws1 = new FakeWs();
+    const ws2 = new FakeWs();
+
+    const first = session.attach(ws1 as never, 80, 24, undefined, {
+      controllerId: 'web:tab-a',
+      controllerKind: 'web',
+    });
+    expect(first.ok).toBe(true);
+
+    const second = session.attach(ws2 as never, 80, 24, undefined, {
+      controllerId: 'web:tab-b',
+      controllerKind: 'web',
+    });
+
+    expect(second).toEqual({
+      ok: false,
+      reason: 'locked',
+      owner: { id: 'web:tab-a', kind: 'web' },
+    });
+    expect(ws1.close).not.toHaveBeenCalled();
+    expect(ws2.close).toHaveBeenCalledWith(4409, 'session locked by another controller');
+
+    session.dispose('test');
+  });
+
+  it('allows an explicit takeover and kicks the previous controller', () => {
+    const session = new PersistentSession(makeOptions());
+    const ws1 = new FakeWs();
+    const ws2 = new FakeWs();
+
+    expect(session.attach(ws1 as never, 80, 24, undefined, {
+      controllerId: 'web:tab-a',
+      controllerKind: 'web',
+    }).ok).toBe(true);
+
+    const takeover = session.attach(ws2 as never, 80, 24, undefined, {
+      controllerId: 'telegram:chat-1',
+      controllerKind: 'telegram',
+      takeover: true,
+    });
+
+    expect(takeover.ok).toBe(true);
+    expect(ws1.close).toHaveBeenCalledWith(4001, 'kicked by new attach');
+    expect(ws2.close).not.toHaveBeenCalled();
+
+    session.dispose('test');
+  });
 });

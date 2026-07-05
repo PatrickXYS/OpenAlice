@@ -102,7 +102,7 @@ const apiKeysSchema = z.object({
 
 export const credentialVendorEnum = z.enum([
   'anthropic', 'openai', 'google',
-  'minimax', 'glm', 'kimi', 'deepseek', 'custom',
+  'minimax', 'glm', 'kimi', 'deepseek', 'longcat', 'custom',
 ])
 export type CredentialVendor = z.infer<typeof credentialVendorEnum>
 
@@ -122,6 +122,8 @@ export type CredentialWireShape = z.infer<typeof credentialWireShapeEnum>
 
 export const credentialSchema = z.object({
   vendor: credentialVendorEnum,
+  /** Human-readable label shown in pickers. Slug stays the stable reference id. */
+  label: z.string().trim().max(80).transform((s) => s || undefined).optional(),
   authType: credentialAuthTypeEnum,
   /** Present for api-key credentials; absent for subscription credentials. */
   apiKey: z.string().optional(),
@@ -195,13 +197,31 @@ export const aiProviderSchema = z.object({
    * `credentials`; a dangling slug is loud-skipped at injection, never fatal.
    */
   workspaceCredentialDefaults: z.record(z.string(), workspaceCredentialDefaultSchema).default({}),
+  /**
+   * User-level default runtime for new interactive workspace sessions. This is
+   * intentionally separate from workspace identity (`agents[]`) and from
+   * credential defaults: it answers "which agent TUI should a plain New Session
+   * start?" Shell is a utility adapter, not a valid stored default.
+   */
+  workspaceDefaultAgent: z.string().nullable().default(null),
+  /**
+   * User-level default runtime for issue-triggered headless work. This stays
+   * separate from `workspaceDefaultAgent`: users often want Codex/Claude for
+   * interactive chat, but Pi/opencode for scheduled scans.
+   */
+  issueDefaultAgent: z.string().nullable().default(null),
 })
 
 export type AIProviderConfig = z.infer<typeof aiProviderSchema>
 
 const agentSchema = z.object({
   maxSteps: z.number().int().positive().default(20),
-  evolutionMode: z.boolean().default(false),
+  /** Master switch for AI-initiated trade execution. When false (default),
+   *  `tradingPush` only stages + asks the user to approve in the Web UI; when
+   *  true, the AI may push committed operations straight to the broker. Gated
+   *  in the UI behind a danger warning + double-confirm. Per-account `readOnly`
+   *  still wins (read-only accounts can't stage in the first place). */
+  allowAiTrading: z.boolean().default(false),
   claudeCode: z.object({
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).default([
@@ -322,8 +342,9 @@ const compactionSchema = z.object({
  * and stays in connectors.
  */
 const mcpSchema = z.object({
+  enabled: z.boolean().default(false),
   port: z.number().int().positive().default(3001),
-}).default({ port: 3001 })
+}).default({ enabled: false, port: 3001 })
 
 const connectorsSchema = z.object({
   web: z.object({ port: z.number().int().positive().default(3002) }).default({ port: 3002 }),
@@ -906,7 +927,12 @@ export async function addCredential(credential: Credential): Promise<string> {
   )
   if (match) {
     // Upgrade the existing record's wires/endpoint in place (don't duplicate).
-    config.credentials[match[0]] = validated
+    const existing = match[1]
+    config.credentials[match[0]] = {
+      ...validated,
+      ...(validated.label ?? existing.label ? { label: validated.label ?? existing.label } : {}),
+      ...(validated.lastModel ?? existing.lastModel ? { lastModel: validated.lastModel ?? existing.lastModel } : {}),
+    }
     await mkdir(CONFIG_DIR, { recursive: true })
     await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
     return match[0]
@@ -973,6 +999,30 @@ export async function writeWorkspaceCredentialDefaults(
     if (parsed.credentialSlug) cleaned[agentId] = parsed
   }
   config.workspaceCredentialDefaults = cleaned
+  await mkdir(CONFIG_DIR, { recursive: true })
+  await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
+}
+
+export async function readWorkspaceDefaultAgent(): Promise<string | null> {
+  const config = await readAIProviderConfig()
+  return config.workspaceDefaultAgent ?? null
+}
+
+export async function writeWorkspaceDefaultAgent(agentId: string | null): Promise<void> {
+  const config = await readAIProviderConfig()
+  config.workspaceDefaultAgent = agentId && agentId.trim() ? agentId.trim() : null
+  await mkdir(CONFIG_DIR, { recursive: true })
+  await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
+}
+
+export async function readIssueDefaultAgent(): Promise<string | null> {
+  const config = await readAIProviderConfig()
+  return config.issueDefaultAgent ?? null
+}
+
+export async function writeIssueDefaultAgent(agentId: string | null): Promise<void> {
+  const config = await readAIProviderConfig()
+  config.issueDefaultAgent = agentId && agentId.trim() ? agentId.trim() : null
   await mkdir(CONFIG_DIR, { recursive: true })
   await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
 }

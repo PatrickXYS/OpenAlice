@@ -37,7 +37,7 @@ export interface Profile {
 
 export type CredentialVendor =
   | 'anthropic' | 'openai' | 'google'
-  | 'minimax' | 'glm' | 'kimi' | 'deepseek'
+  | 'minimax' | 'glm' | 'kimi' | 'deepseek' | 'longcat'
   | 'custom'
 
 export type CredentialAuthType = 'api-key' | 'subscription'
@@ -162,7 +162,7 @@ export interface AIProviderConfig {
 export interface AppConfig {
   aiProvider: AIProviderConfig
   engine: Record<string, unknown>
-  agent: { evolutionMode: boolean; claudeCode: Record<string, unknown> }
+  agent: { allowAiTrading: boolean; claudeCode: Record<string, unknown> }
   compaction: { maxContextTokens: number; maxOutputTokens: number }
   snapshot: {
     enabled: boolean
@@ -181,6 +181,7 @@ export interface AppConfig {
  * stays under connectors.
  */
 export interface McpConfig {
+  enabled: boolean
   port: number
 }
 
@@ -289,6 +290,10 @@ export interface BrokerHealthInfo {
   lastSuccessAt?: string
   lastFailureAt?: string
   recovering: boolean
+  /** True while the account's initial broker connect is still in flight; the UI
+   *  renders a "connecting…" state off this (status is optimistically 'healthy'
+   *  during the window, so it can't be inferred from status/reach). */
+  connecting: boolean
   disabled: boolean
 }
 
@@ -540,7 +545,7 @@ export interface BrokerPreset {
   defaultName: string
   badge: string
   badgeColor: string
-  engine: 'ccxt' | 'alpaca' | 'ibkr' | 'leverup' | 'longbridge' | 'mock'
+  engine: 'ccxt' | 'alpaca' | 'ibkr' | 'leverup' | 'longbridge' | 'schwab' | 'mock'
   guardCategory: 'crypto' | 'securities'
   modes?: ModeOption[]
   subtitleFields: SubtitleField[]

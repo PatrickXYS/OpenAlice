@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -11,6 +11,7 @@ import type { AdapterRegistry } from './cli-adapter.js';
 import { injectWorkspaceContext } from './context-injector.js';
 import { injectWorkspaceCredentials } from './credential-injection.js';
 import type { Logger } from './logger.js';
+import { generatePetnameId } from './petname-id.js';
 import type { AgentCredentialDecl, TemplateRegistry } from './template-registry.js';
 import type { WorkspaceMeta, WorkspaceRegistry } from './workspace-registry.js';
 
@@ -61,9 +62,9 @@ const TAG_RE = /^[a-z0-9][a-z0-9_-]{0,32}$/;
  * - An explicit `agentsRequested` (a caller pinning a subset) wins verbatim.
  * - Otherwise a workspace gets EVERY registered adapter enabled; restricting
  *   it was a create-time decision with no first-action basis. The template's
- *   `defaultAgents` is honored only as the HEAD of the list (first-wins
- *   dedupe), so `agents[0]` — the "spawn a new session" default — follows
- *   template intent without limiting what's available.
+ *   `defaultAgents` is honored as an ordering hint for agent runtimes, while
+ *   utility adapters such as `shell` are kept at the tail so they never become
+ *   an implicit workload.
  *
  * This used to live in the frontend create hook alone, which silently left
  * backend-only callers (quick-chat) on the bare-`defaultAgents` set.
@@ -74,7 +75,12 @@ export function resolveCreateAgents(
   allAdapterIds: readonly string[],
 ): readonly string[] {
   if (agentsRequested && agentsRequested.length > 0) return agentsRequested;
-  return [...new Set([...templateDefaultAgents, ...allAdapterIds])];
+  const utility = new Set(['shell']);
+  const ordered = [...new Set([...templateDefaultAgents, ...allAdapterIds])];
+  return [
+    ...ordered.filter((id) => !utility.has(id)),
+    ...ordered.filter((id) => utility.has(id)),
+  ];
 }
 
 /**
@@ -132,7 +138,12 @@ export class WorkspaceCreator {
       }
     }
 
-    const id = randomUUID();
+    const id = generatePetnameId(templateName, {
+      fallbackPrefix: 'workspace',
+      isTaken: (candidate) =>
+        this.opts.registry.hasId(candidate) ||
+        existsSync(join(this.opts.workspacesRoot, candidate)),
+    });
     const dir = join(this.opts.workspacesRoot, id);
     const log = this.opts.logger.child({ tag, id, dir, template: templateName, agents });
 
