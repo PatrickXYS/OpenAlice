@@ -11,6 +11,15 @@ import '../../contract-ext.js'
 import type { CcxtMarket } from './ccxt-types.js'
 import { buildContract } from '../contract-builder.js'
 import type { SecType } from '../../contract-discipline.js'
+import type { BarInterval } from '../types.js'
+
+/** Normalized BarInterval → CCXT timeframe string. CCXT happens to use the
+ *  same tokens, but keep the map explicit + validate against the exchange's
+ *  actual `timeframes` at call time (per-exchange support varies). */
+export const CCXT_TIMEFRAME: Record<BarInterval, string> = {
+  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
+  '1h': '1h', '4h': '4h', '1d': '1d', '1w': '1w',
+}
 
 // ---- Type mapping ----
 

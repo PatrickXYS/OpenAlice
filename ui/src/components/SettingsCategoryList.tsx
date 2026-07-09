@@ -1,32 +1,21 @@
+import { useTranslation } from 'react-i18next'
+import { SlidersHorizontal, Bot, ShieldCheck, CandlestickChart, ListChecks, Plug, LineChart, Newspaper } from 'lucide-react'
 import { useWorkspace } from '../tabs/store'
-import { getFocusedTab, type ViewSpec } from '../tabs/types'
+import { getFocusedTab } from '../tabs/types'
 import { SidebarRow } from './SidebarRow'
 
-type SettingsCategory = Extract<ViewSpec, { kind: 'settings' }>['params']['category']
-
-interface CategoryItem {
-  label: string
-  category: SettingsCategory
-  /**
-   * Other view kinds that count as "active" for this row. Used by
-   * Trading Accounts: when a uta-detail tab is focused, Trading
-   * Accounts should still light up.
-   */
-  alsoActiveFor?: ViewSpec['kind'][]
-}
-
-const CATEGORIES: CategoryItem[] = [
-  { label: 'General', category: 'general' },
-  { label: 'AI Provider', category: 'ai-provider' },
-  // Trading Accounts moved to its own ActivityBar Beta entry — see
-  // TradingAccountsBetaSidebar. The `settings/trading` ViewSpec is
-  // still the underlying tab.
+const CATEGORIES = [
+  { labelKey: 'settings.category.general',     category: 'general',        Icon: SlidersHorizontal },
+  { labelKey: 'settings.category.aiProvider',  category: 'ai-provider',    Icon: Bot },
+  { labelKey: 'settings.category.agentPermissions', category: 'agent-permissions', Icon: ShieldCheck },
+  { labelKey: 'settings.category.trading',     category: 'trading',        Icon: CandlestickChart },
+  { labelKey: 'settings.category.issues',      category: 'issues',         Icon: ListChecks },
   // Connectors moved to its own ActivityBar Legacy entry — see
   // ConnectorsLegacySidebar.
-  { label: 'MCP Server', category: 'mcp' },
-  { label: 'Market Data', category: 'market-data' },
-  { label: 'News Sources', category: 'news-collector' },
-]
+  { labelKey: 'settings.category.mcpServer',   category: 'mcp',            Icon: Plug },
+  { labelKey: 'settings.category.marketData',  category: 'market-data',    Icon: LineChart },
+  { labelKey: 'settings.category.newsSources', category: 'news-collector', Icon: Newspaper },
+] as const
 
 /**
  * Settings sidebar — flat list of config categories. Click opens (or
@@ -34,20 +23,21 @@ const CATEGORIES: CategoryItem[] = [
  * currently-focused tab's spec, not by sidebar selection.
  */
 export function SettingsCategoryList() {
+  const { t } = useTranslation()
   const focused = useWorkspace((state) => getFocusedTab(state)?.spec)
   const openOrFocus = useWorkspace((state) => state.openOrFocus)
 
   return (
-    <div className="py-0.5">
+    <div className="py-1">
       {CATEGORIES.map((item) => {
         const active =
-          (focused?.kind === 'settings' && focused.params.category === item.category) ||
-          (item.alsoActiveFor != null && focused != null && item.alsoActiveFor.includes(focused.kind))
+          focused?.kind === 'settings' && focused.params.category === item.category
         return (
           <SidebarRow
             key={item.category}
-            label={item.label}
+            label={t(item.labelKey)}
             active={active}
+            icon={<item.Icon size={14} strokeWidth={1.75} className="text-text-muted/70" aria-hidden />}
             onClick={() => openOrFocus({ kind: 'settings', params: { category: item.category } })}
           />
         )

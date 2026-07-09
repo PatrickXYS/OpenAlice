@@ -13,50 +13,54 @@
  * a data-model change.
  */
 
+export type WorkspaceSource = 'chat'
+
 export type ViewSpec =
-  | { kind: 'chat';           params: { channelId: string } }
   | { kind: 'workspace-list'; params: Record<string, never> }
-  | { kind: 'workspace';      params: { wsId: string; sessionId?: string } }
+  | { kind: 'workspace';      params: { wsId: string; sessionId?: string; source?: WorkspaceSource } }
   | { kind: 'template-catalog'; params: Record<string, never> }
   | { kind: 'template-detail';  params: { name: string } }
   | { kind: 'portfolio';      params: Record<string, never> }
-  | { kind: 'automation';     params: { section: 'flow' | 'heartbeat' | 'cron' | 'webhook' } }
+  | { kind: 'trading-as-git'; params: Record<string, never> }
+  | { kind: 'issue';          params: Record<string, never> }
+  | { kind: 'issue-detail';   params: { wsId: string; id: string } }
+  | { kind: 'tracked-issue-detail'; params: { wsId: string; id: string } }
+  | { kind: 'automation';     params: { section: 'runs' | 'api' | 'flow' | 'webhook' } }
   | { kind: 'news';           params: Record<string, never> }
   | { kind: 'market-list';    params: Record<string, never> }
-  | { kind: 'market-detail';  params: { assetClass: 'equity' | 'crypto' | 'currency' | 'commodity'; symbol: string } }
-  | { kind: 'settings';       params: { category: 'general' | 'ai-provider' | 'trading' | 'connectors' | 'mcp' | 'market-data' | 'news-collector' } }
+  | { kind: 'market-rotation'; params: Record<string, never> }
+  | { kind: 'market-board';   params: { board: 'movers' | 'calendar' | 'macro' | 'term-structure' | 'global-macro' | 'shipping' | 'fed' } }
+  | { kind: 'market-detail';  params: { assetClass: 'equity' | 'crypto' | 'currency' | 'commodity'; symbol: string; source?: string } }
+  | { kind: 'settings';       params: { category: 'general' | 'ai-provider' | 'agent-permissions' | 'trading' | 'issues' | 'mcp' | 'market-data' | 'news-collector' } }
   | { kind: 'uta-detail';     params: { id: string } }
-  | { kind: 'dev';            params: { tab: 'connectors' | 'tools' | 'sessions' | 'snapshots' | 'logs' | 'simulator' } }
-  | { kind: 'notifications-inbox'; params: Record<string, never> }
+  | { kind: 'onboarding';     params: Record<string, never> }
+  | { kind: 'design-project'; params: { project: string } }
+  | { kind: 'dev';            params: { tab: 'tools' | 'onboarding' | 'snapshots' | 'logs' | 'simulator' } }
   | { kind: 'inbox';               params: Record<string, never> }
+  | { kind: 'tracked';             params: Record<string, never> }
+  | { kind: 'chat-landing';        params: { targetWsId?: string } }
+  | { kind: 'file-viewer';         params: { wsId: string; path: string } }
 
 export type ViewKind = ViewSpec['kind']
 
 /**
- * Activity Bar sections — the left-rail icon set. Each section may have its
- * own secondary sidebar; clicking the activity icon toggles which sidebar
- * is shown. Decoupled from focused-tab kind: the sidebar you see is whichever
- * section the user picked, regardless of what tab is focused.
- *
- * Note: trading-as-git has no associated tab kind — it's sidebar-only
- * (the approval queue lives in the sidebar; future commit-detail tabs will
- * be opened from there).
+ * Activity Bar sections — the left-rail icon set. The rail selects the
+ * product area and highlights it; local navigators live inside the page that
+ * owns them, not in the app shell.
  */
 export type ActivitySection =
   | 'chat'
   | 'inbox'
+  | 'tracked'
   | 'workspaces'
   | 'trading-as-git'
   | 'settings'
   | 'dev'
   | 'market'
   | 'portfolio'
+  | 'issue'
   | 'automation'
   | 'news'
-  | 'traditional-chat'
-  | 'notifications-legacy'
-  | 'connectors-legacy'
-  | 'trading-accounts'
 
 export interface Tab {
   id: string
@@ -78,8 +82,9 @@ export interface WorkspaceState {
   tree: WorkspaceTree
   focusedGroupId: string
   /**
-   * Which sidebar is currently shown. Independent of focused tab — the
-   * user picks via ActivityBar. `null` means no sidebar (all collapsed).
+   * Which ActivityBar section is highlighted. Independent of focused tab:
+   * URL adoption sets it from the focused surface, and ActivityBar clicks set
+   * it before opening the target page.
    */
   selectedSidebar: ActivitySection | null
 }

@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
-import { ArrowUpCircle, ChevronRight, Cpu, GitBranch, ScrollText, Settings, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
+import { formatRelativeTime } from '../../lib/intl'
+import { ArrowUpCircle, Bot, ChevronRight, Code, Cpu, GitBranch, ScrollText, Settings, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
 import type { GitLogEntry, Workspace } from './api'
+import { workspaceDisplayName, workspaceDisplayTitle } from './display'
 
 /**
  * Single-workspace card for the Workspaces Overview dashboard. Variant B
@@ -17,6 +19,8 @@ import type { GitLogEntry, Workspace } from './api'
 const AGENT_ICONS: Record<string, LucideIcon> = {
   claude: Sparkles,
   codex: Cpu,
+  opencode: Code,
+  pi: Bot,
   shell: Terminal,
 }
 
@@ -26,16 +30,6 @@ function AgentGlyph({ agent }: { agent: string }) {
   return <span aria-hidden="true" className="text-[11px] font-mono">·</span>
 }
 
-function relativeTime(ms: number): string {
-  const diff = Math.max(0, Date.now() - ms)
-  const m = Math.floor(diff / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.floor(h / 24)
-  return `${d}d ago`
-}
 
 interface Props {
   workspace: Workspace
@@ -61,6 +55,7 @@ export function OverviewCard({
   onOpenTemplate,
 }: Props) {
   const w = workspace
+  const label = workspaceDisplayName(w)
   const hasRunning = w.sessions.some((s) => s.state === 'running')
 
   const lastActivityMs = useMemo(() => {
@@ -80,6 +75,8 @@ export function OverviewCard({
   const overrideAgents: string[] = []
   if (w.agentOverride?.claude) overrideAgents.push('claude')
   if (w.agentOverride?.codex) overrideAgents.push('codex')
+  if (w.agentOverride?.opencode) overrideAgents.push('opencode')
+  if (w.agentOverride?.pi) overrideAgents.push('pi')
 
   return (
     <div
@@ -93,11 +90,11 @@ export function OverviewCard({
           aria-hidden="true"
         />
         <div className="flex-1 min-w-0">
-          <h3 className="text-[14px] font-semibold text-text truncate" title={w.tag}>
-            {w.tag}
+          <h3 className="text-[14px] font-semibold text-text truncate" title={workspaceDisplayTitle(w)}>
+            {label}
           </h3>
-          <p className="text-[11px] text-text-muted">
-            Active {relativeTime(lastActivityMs)}
+          <p className="text-[11px] text-text-muted truncate" title={w.description}>
+            {w.description?.trim() || `Active ${formatRelativeTime(lastActivityMs)}`}
           </p>
         </div>
         {w.upgradeAvailable && w.template && (

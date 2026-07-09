@@ -6,25 +6,91 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Marked } from 'marked'
+import { Marked, type TokenizerAndRendererExtension } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
 import DOMPurify from 'dompurify'
 import 'highlight.js/styles/github-dark.min.css'
 
-// Shared Marked instance (parser config is stateless — safe to reuse).
-const marked = new Marked(
-  markedHighlight({
-    langPrefix: 'hljs language-',
-    highlight(code, lang) {
-      if (lang && hljs.getLanguage(lang)) {
-        return hljs.highlight(code, { language: lang }).value
-      }
-      return hljs.highlightAuto(code).value
+import { useWikilinkHandler } from '../live/wikilink'
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
+ * Obsidian-style `[[name]]` wikilinks → clickable entity references.
+ *
+ * Inline marked extension (not a regex preprocess) so it never fires
+ * inside code spans / fenced blocks — marked only offers the token stream
+ * to extensions in inline contexts. Mirrors the backend matcher in
+ * `src/core/entity-backlinks.ts` (`/\[\[([^[\]\n]+)\]\]/`). The rendered
+ * anchor carries the lowercased entity key in `data-entity` (entity keys
+ * are case-insensitive); MarkdownContent delegates the actual navigation
+ * on click so this module stays a pure string renderer.
+ */
+function createWikilinkExtension(opts: { codeSpanWikilinks: boolean }): TokenizerAndRendererExtension {
+  return {
+    name: 'wikilink',
+    level: 'inline',
+    start(src: string) {
+      const plain = src.indexOf('[[')
+      if (!opts.codeSpanWikilinks) return plain
+      const quoted = src.indexOf('`[[')
+      if (plain < 0) return quoted
+      if (quoted < 0) return plain
+      return Math.min(plain, quoted)
     },
-  }),
-  { breaks: true },
-)
+    tokenizer(src: string) {
+      const quoted = opts.codeSpanWikilinks ? /^`\[\[([^[\]\n]+)\]\]`/.exec(src) : null
+      if (quoted) return { type: 'wikilink', raw: quoted[0], text: quoted[1]!.trim() }
+      const plain = /^\[\[([^[\]\n]+)\]\]/.exec(src)
+      if (!plain) return undefined
+      return { type: 'wikilink', raw: plain[0], text: plain[1]!.trim() }
+    },
+    renderer(token) {
+      const name = token.text as string
+      const key = name.toLowerCase()
+      return `<a class="wikilink" data-entity="${escapeHtml(key)}">${escapeHtml(name)}</a>`
+    },
+  }
+}
+
+function createMarked(opts: { strikethrough: boolean; codeSpanWikilinks: boolean }): Marked {
+  const instance = new Marked(
+    markedHighlight({
+      langPrefix: 'hljs language-',
+      highlight(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value
+        }
+        return hljs.highlightAuto(code).value
+      },
+    }),
+    { breaks: true },
+  )
+  instance.use({ extensions: [createWikilinkExtension({ codeSpanWikilinks: opts.codeSpanWikilinks })] })
+  if (!opts.strikethrough) {
+    instance.use({
+      tokenizer: {
+        del() {
+          return undefined
+        },
+      },
+    })
+  }
+  return instance
+}
+
+// Shared Marked instances (parser config is stateless — safe to reuse).
+const markedWithStrikethrough = createMarked({ strikethrough: true, codeSpanWikilinks: false })
+const markedWithoutStrikethrough = createMarked({ strikethrough: false, codeSpanWikilinks: false })
+const markedWithCodeSpanWikilinks = createMarked({ strikethrough: true, codeSpanWikilinks: true })
+const markedComment = createMarked({ strikethrough: false, codeSpanWikilinks: true })
 
 const COPY_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`
 const CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
@@ -44,37 +110,86 @@ function addCodeBlockWrappers(html: string): string {
 interface MarkdownContentProps {
   text: string
   className?: string
+  /**
+   * GitHub-flavoured `~~delete~~` rendering. Disable on terse agent comments
+   * because financial prose often uses `~$123` for approximate prices.
+   */
+  strikethrough?: boolean
+  /**
+   * Treat an exact code span like `` `[[name]]` `` as a wikilink. Inbox
+   * comments often quote entity refs this way, but they should still navigate.
+   */
+  codeSpanWikilinks?: boolean
+  /**
+   * Click handler for `[[name]]` wikilinks, receiving the lowercased entity
+   * key. Defaults to jumping to the Tracked activity (see useWikilinkHandler).
+   * Pass an explicit handler to override (e.g. tests, alternate surfaces).
+   */
+  onWikilink?: (entityKey: string) => void
 }
 
-export function MarkdownContent({ text, className }: MarkdownContentProps) {
+export function renderMarkdownHtml(
+  text: string,
+  opts: { strikethrough?: boolean; codeSpanWikilinks?: boolean } = {},
+): string {
+  const parser = opts.codeSpanWikilinks
+    ? opts.strikethrough === false
+      ? markedComment
+      : markedWithCodeSpanWikilinks
+    : opts.strikethrough === false
+      ? markedWithoutStrikethrough
+      : markedWithStrikethrough
+  const raw = DOMPurify.sanitize(parser.parse(text) as string)
+  return addCodeBlockWrappers(raw)
+}
+
+export function MarkdownContent({
+  text,
+  className,
+  strikethrough = true,
+  codeSpanWikilinks = false,
+  onWikilink,
+}: MarkdownContentProps) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const defaultWikilink = useWikilinkHandler()
+  const wikilink = onWikilink ?? defaultWikilink
 
   const html = useMemo(() => {
-    const raw = DOMPurify.sanitize(marked.parse(text) as string)
-    return addCodeBlockWrappers(raw)
-  }, [text])
+    return renderMarkdownHtml(text, { strikethrough, codeSpanWikilinks })
+  }, [text, strikethrough, codeSpanWikilinks])
 
-  const handleCopyClick = useCallback((e: MouseEvent) => {
-    const btn = (e.target as HTMLElement).closest('.code-copy-btn') as HTMLButtonElement | null
-    if (!btn) return
-    const wrapper = btn.closest('.code-block-wrapper')
-    const code = wrapper?.querySelector('code')?.textContent ?? ''
-    navigator.clipboard.writeText(code).then(() => {
-      btn.innerHTML = `${CHECK_ICON} Copied!`
-      btn.classList.add('copied')
-      setTimeout(() => {
-        btn.innerHTML = `${COPY_ICON} Copy`
-        btn.classList.remove('copied')
-      }, 2000)
-    })
-  }, [])
+  const handleClick = useCallback(
+    (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      const link = target.closest('a.wikilink') as HTMLElement | null
+      if (link) {
+        e.preventDefault()
+        const key = link.getAttribute('data-entity')
+        if (key) wikilink(key)
+        return
+      }
+      const btn = target.closest('.code-copy-btn') as HTMLButtonElement | null
+      if (!btn) return
+      const wrapper = btn.closest('.code-block-wrapper')
+      const code = wrapper?.querySelector('code')?.textContent ?? ''
+      navigator.clipboard.writeText(code).then(() => {
+        btn.innerHTML = `${CHECK_ICON} Copied!`
+        btn.classList.add('copied')
+        setTimeout(() => {
+          btn.innerHTML = `${COPY_ICON} Copy`
+          btn.classList.remove('copied')
+        }, 2000)
+      })
+    },
+    [wikilink],
+  )
 
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
-    el.addEventListener('click', handleCopyClick)
-    return () => el.removeEventListener('click', handleCopyClick)
-  }, [handleCopyClick])
+    el.addEventListener('click', handleClick)
+    return () => el.removeEventListener('click', handleClick)
+  }, [handleClick])
 
   return (
     <div ref={contentRef} className={className}>

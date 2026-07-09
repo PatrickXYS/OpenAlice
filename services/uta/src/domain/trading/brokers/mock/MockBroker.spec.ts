@@ -338,6 +338,26 @@ describe('getAccount', () => {
   })
 })
 
+// ==================== getHistorical ====================
+
+describe('getHistorical', () => {
+  it('returns deterministic synthetic bars anchored to markPrice (ascending, string-typed)', async () => {
+    const acc = new MockBroker({ id: 'mock-paper', cash: 100_000 })
+    acc.setMarkPrice('AAPL', 200)
+    const contract = makeContract({ aliceId: 'mock-paper|AAPL', symbol: 'AAPL' })
+
+    const bars = await acc.getHistorical(contract, { interval: '1d', limit: 5 })
+
+    expect(bars).toHaveLength(5)
+    const ts = bars.map((b) => b.timestamp.getTime())
+    expect(ts).toEqual([...ts].sort((a, b) => a - b)) // ascending
+    expect(typeof bars[0].close).toBe('string')
+    expect(Number(bars[0].close)).toBeCloseTo(200) // oldest at base
+    expect(Number(bars[bars.length - 1].close)).toBeCloseTo(200 + 4 * 0.1) // newest drifted up
+    expect(acc.callCount('getHistorical')).toBe(1)
+  })
+})
+
 // ==================== Call tracking ====================
 
 describe('call tracking', () => {

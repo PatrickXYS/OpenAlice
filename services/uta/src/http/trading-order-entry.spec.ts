@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createTradingRoutes } from './routes-trading.js'
-import type { EngineContext } from '@/core/types.js'
+import type { UTAEngineContext } from '../types.js'
 
 // Stub the UTA + manager just enough that the handler can call through.
 // We capture every call to verify what landed at the staging layer.
@@ -68,7 +68,7 @@ function makeMockUTA(opts: { stageThrows?: 'stage' | 'commit' | 'push' | null; p
 }
 
 function makeRoutes(uta: unknown) {
-  // Minimal EngineContext — only `utaManager.get` is exercised.
+  // Minimal UTAEngineContext — only `utaManager.get` is exercised.
   const ctx = {
     utaManager: {
       get: (id: string) => (id === 'mock-uta' ? uta : undefined),
@@ -77,7 +77,7 @@ function makeRoutes(uta: unknown) {
       getAggregatedEquity: vi.fn(),
     },
     snapshotService: undefined,
-  } as unknown as EngineContext
+  } as unknown as UTAEngineContext
   return createTradingRoutes(ctx)
 }
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { formatRelativeTime } from '../../lib/intl';
 import type { ReactElement } from 'react';
-import { ChevronDown } from 'lucide-react';
 
 import { listFiles, type DirListing, type FileEntry } from './api';
+import { Skeleton } from '../StateViews';
+import { useWorkspace } from '../../tabs/store';
 
 const POLL_MS = 5000;
 
@@ -14,7 +16,7 @@ export function FilesPanel(props: FilesPanelProps): ReactElement {
   const [path, setPath] = useState('');
   const [listing, setListing] = useState<DirListing | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const openOrFocus = useWorkspace((s) => s.openOrFocus);
 
   useEffect(() => {
     let alive = true;
@@ -49,78 +51,75 @@ export function FilesPanel(props: FilesPanelProps): ReactElement {
   const enter = (entry: FileEntry): void => {
     if (entry.kind === 'dir' || entry.kind === 'symlink') {
       setPath(path ? `${path}/${entry.name}` : entry.name);
+      return;
+    }
+    if (entry.kind === 'file') {
+      // Open the file in the dedicated viewer tab (VS Code-style).
+      const rel = path ? `${path}/${entry.name}` : entry.name;
+      openOrFocus({ kind: 'file-viewer', params: { wsId: props.wsId, path: rel } });
     }
   };
 
   const breadcrumb = path.split('/').filter(Boolean);
 
   return (
-    <section className={`panel files-panel${collapsed ? ' is-collapsed' : ''}`}>
+    <section className="panel files-panel">
       <header className="panel-header">
-        <button
-          type="button"
-          className="panel-collapse"
-          onClick={() => setCollapsed((c) => !c)}
-          aria-label={collapsed ? 'Expand files panel' : 'Collapse files panel'}
-          aria-expanded={!collapsed}
-        >
-          <ChevronDown
-            size={11}
-            strokeWidth={2.25}
-            className={`panel-collapse-chev${collapsed ? ' is-collapsed' : ''}`}
-            aria-hidden
-          />
-        </button>
         <span className="panel-title">files</span>
-        {!collapsed && (
-          <nav className="files-breadcrumb">
-            <button
-              type="button"
-              className="files-crumb"
-              onClick={() => setPath('')}
-              disabled={path === ''}
-            >
-              ~
-            </button>
-            {breadcrumb.map((seg, i) => (
-              <span key={i} className="files-crumb-seg">
-                <span className="files-crumb-sep">/</span>
-                <button
-                  type="button"
-                  className="files-crumb"
-                  onClick={() => setPath(breadcrumb.slice(0, i + 1).join('/'))}
-                  disabled={i === breadcrumb.length - 1}
-                >
-                  {seg}
-                </button>
-              </span>
-            ))}
-          </nav>
-        )}
+        <nav className="files-breadcrumb">
+          <button
+            type="button"
+            className="files-crumb"
+            onClick={() => setPath('')}
+            disabled={path === ''}
+          >
+            ~
+          </button>
+          {breadcrumb.map((seg, i) => (
+            <span key={i} className="files-crumb-seg">
+              <span className="files-crumb-sep">/</span>
+              <button
+                type="button"
+                className="files-crumb"
+                onClick={() => setPath(breadcrumb.slice(0, i + 1).join('/'))}
+                disabled={i === breadcrumb.length - 1}
+              >
+                {seg}
+              </button>
+            </span>
+          ))}
+        </nav>
       </header>
 
-      {!collapsed && (
-        <>
-          {error && <div className="panel-error">{error}</div>}
+      {error && <div className="panel-error">{error}</div>}
 
-          <ul className="files-list">
-            {listing?.entries.length === 0 && !error && (
-              <li className="panel-empty">empty</li>
-            )}
-            {listing?.entries.map((e) => (
-              <li
-                key={e.name}
-                className={`files-row files-${e.kind}`}
-                onClick={() => enter(e)}
-              >
-                <span className="files-icon">{iconFor(e)}</span>
-                <span className="files-name">{e.name}</span>
-                <span className="files-meta">{formatMeta(e)}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+      <ul className="files-list">
+        {!listing && !error &&
+          Array.from({ length: 6 }).map((_, i) => (
+            <li key={i} className="files-row" aria-hidden="true">
+              <span className="files-icon">
+                <Skeleton className="h-4 w-4 rounded" />
+              </span>
+              <span className="files-name">
+                <Skeleton className="h-3.5 w-32 rounded" />
+              </span>
+            </li>
+          ))}
+        {listing?.entries.length === 0 && !error && (
+          <li className="panel-empty">empty</li>
+        )}
+        {listing?.entries.map((e) => (
+          <li
+            key={e.name}
+            className={`files-row files-${e.kind}`}
+            onClick={() => enter(e)}
+          >
+            <span className="files-icon">{iconFor(e)}</span>
+            <span className="files-name">{e.name}</span>
+            <span className="files-meta">{formatMeta(e)}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -133,8 +132,8 @@ function iconFor(e: FileEntry): string {
 }
 
 function formatMeta(e: FileEntry): string {
-  if (e.kind !== 'file' || e.sizeBytes === null) return relTime(e.mtime);
-  return `${formatSize(e.sizeBytes)} · ${relTime(e.mtime)}`;
+  if (e.kind !== 'file' || e.sizeBytes === null) return formatRelativeTime(e.mtime);
+  return `${formatSize(e.sizeBytes)} · ${formatRelativeTime(e.mtime)}`;
 }
 
 function formatSize(n: number): string {
@@ -144,12 +143,3 @@ function formatSize(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)}G`;
 }
 
-function relTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return '';
-  const dMs = Date.now() - t;
-  if (dMs < 60_000) return 'now';
-  if (dMs < 3_600_000) return `${Math.floor(dMs / 60_000)}m`;
-  if (dMs < 86_400_000) return `${Math.floor(dMs / 3_600_000)}h`;
-  return `${Math.floor(dMs / 86_400_000)}d`;
-}

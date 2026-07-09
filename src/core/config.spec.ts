@@ -13,12 +13,24 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined),
+  rename: vi.fn().mockResolvedValue(undefined),
+  chmod: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Identity-mock the sealing layer: it's unit-tested in sealing.spec.ts (and
+// round-tripped against real disk in config-accounts.spec.ts). Identity keeps
+// this file's on-disk JSON assertions readable, and spares the mocked
+// fs/promises from having to simulate the key file.
+vi.mock('./sealing.js', () => ({
+  isSealedEnvelope: () => false,
+  seal: async (v: unknown) => v,
+  unseal: async (v: unknown) => v,
 }))
 
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import {
   readAIProviderConfig,
-  setActiveProfile,
   readToolsConfig,
   readAgentConfig,
   readMarketDataConfig,
@@ -26,13 +38,9 @@ import {
   readUTAsConfig,
   writeUTAsConfig,
   aiProviderSchema,
-  profileSchema,
-  resolveProfile,
   resolveCredential,
   deleteCredential,
   credentialSchema,
-  extractCredentialFromProfile,
-  type Profile,
 } from './config.js'
 
 const mockReadFile = vi.mocked(readFile)
@@ -65,58 +73,34 @@ beforeEach(() => {
 // ==================== readAIProviderConfig ====================
 
 describe('readAIProviderConfig', () => {
-  it('returns schema defaults when file is missing', async () => {
+  it('returns schema defaults (empty vault) when file is missing', async () => {
     fileNotFound()
     const cfg = await readAIProviderConfig()
-    expect(cfg.activeProfile).toBe('default')
-    expect(cfg.profiles.default).toBeDefined()
-    expect(cfg.profiles.default.backend).toBe('agent-sdk')
+    expect(cfg.credentials).toEqual({})
+    expect(cfg.apiKeys).toEqual({})
   })
 
-  it('parses valid profile-based content', async () => {
+  it('parses a credential vault', async () => {
     fileReturns({
       apiKeys: { openai: 'sk-test' },
-      profiles: { main: { backend: 'codex', label: 'GPT', model: 'gpt-5.4', loginMethod: 'codex-oauth' } },
-      activeProfile: 'main',
+      credentials: { 'glm-1': { vendor: 'glm', authType: 'api-key', apiKey: 'k', wires: { anthropic: 'https://open.bigmodel.cn/api/anthropic' } } },
     })
     const cfg = await readAIProviderConfig()
-    expect(cfg.activeProfile).toBe('main')
-    expect(cfg.profiles.main.backend).toBe('codex')
-    expect(cfg.profiles.main.model).toBe('gpt-5.4')
+    expect(cfg.credentials['glm-1'].vendor).toBe('glm')
+    expect(cfg.apiKeys.openai).toBe('sk-test')
   })
 
   it('returns defaults when file contains invalid JSON (parse error)', async () => {
     fileReadError('Unexpected token')
     const cfg = await readAIProviderConfig()
-    expect(cfg.activeProfile).toBe('default')
-  })
-})
-
-// ==================== setActiveProfile ====================
-
-describe('setActiveProfile', () => {
-  it('updates activeProfile and writes to disk', async () => {
-    const config = {
-      apiKeys: {},
-      profiles: {
-        a: { backend: 'agent-sdk', label: 'A', model: 'claude-sonnet-4-6', loginMethod: 'api-key' },
-        b: { backend: 'codex', label: 'B', model: 'gpt-5.4', loginMethod: 'codex-oauth' },
-      },
-      activeProfile: 'a',
-    }
-    fileReturns(config)
-
-    await setActiveProfile('b')
-
-    expect(mockWriteFile).toHaveBeenCalled()
-    const written = JSON.parse((mockWriteFile.mock.calls[0][1] as string))
-    expect(written.activeProfile).toBe('b')
-    expect(written.profiles.a).toBeDefined() // preserved
+    expect(cfg.credentials).toEqual({})
   })
 
-  it('throws on unknown profile slug', async () => {
-    fileReturns({ apiKeys: {}, profiles: { a: { backend: 'agent-sdk', label: 'A', model: 'x' } }, activeProfile: 'a' })
-    await expect(setActiveProfile('nonexistent')).rejects.toThrow('Unknown profile')
+  it('ignores legacy profiles/activeProfile fields (stripped by the schema)', async () => {
+    fileReturns({ profiles: { default: { backend: 'agent-sdk' } }, activeProfile: 'default', credentials: {} })
+    const cfg = await readAIProviderConfig()
+    expect('profiles' in cfg).toBe(false)
+    expect('activeProfile' in cfg).toBe(false)
   })
 })
 
@@ -149,7 +133,7 @@ describe('readAgentConfig', () => {
     fileNotFound()
     const cfg = await readAgentConfig()
     expect(cfg.maxSteps).toBe(20)
-    expect(cfg.evolutionMode).toBe(false)
+    expect(cfg.allowAiTrading).toBe(false)
   })
 
   it('parses maxSteps from file', async () => {
@@ -166,7 +150,7 @@ describe('readMarketDataConfig', () => {
     fileNotFound()
     const cfg = await readMarketDataConfig()
     expect(cfg.enabled).toBe(true)
-    expect(cfg.backend).toBe('typebb-sdk')
+    expect(cfg.hub).toEqual({ enabled: true, baseUrl: 'https://traderhub.openalice.ai' })
   })
 
   it('parses enabled flag from file', async () => {
@@ -198,7 +182,7 @@ describe('writeConfigSection', () => {
 
   it('throws ZodError for invalid data (does not write file)', async () => {
     await expect(
-      writeConfigSection('aiProvider', { profiles: { bad: { backend: 'invalid-backend', label: 'X' } } })
+      writeConfigSection('aiProvider', { credentials: { bad: { vendor: 'not-a-vendor', authType: 'api-key' } } })
     ).rejects.toThrow()
     // writeFile should not have been called
     expect(mockWriteFile).not.toHaveBeenCalled()
@@ -232,6 +216,7 @@ describe('readUTAsConfig', () => {
     const accounts = await readUTAsConfig()
     expect(accounts).toHaveLength(2)
     expect(accounts[0].presetId).toBe('okx')
+    expect(accounts[0].asVendor).toBe(true)
     expect(accounts[1].presetId).toBe('alpaca')
   })
 
@@ -278,6 +263,7 @@ describe('writeUTAsConfig', () => {
     await writeUTAsConfig([{
       id: 'acc-1', presetId: 'alpaca', enabled: true, guards: [],
       presetConfig: { mode: 'paper', apiKey: 'k', apiSecret: 's' },
+      keyless: false, readOnly: false, asVendor: true, editable: true,
     }])
     const filePath = mockWriteFile.mock.calls[0][0] as string
     expect(filePath).toMatch(/accounts\.json$/)
@@ -291,53 +277,46 @@ describe('writeUTAsConfig', () => {
   })
 })
 
-// ==================== aiProviderSchema (Zod schema validation) ====================
-
-describe('aiProviderSchema (profile-based)', () => {
-  it('uses defaults for empty object', () => {
-    const result = aiProviderSchema.parse({})
-    expect(result.activeProfile).toBe('default')
-    expect(result.profiles.default).toBeDefined()
-    expect(result.apiKeys).toEqual({})
+describe('writeConfigSection(trading)', () => {
+  it('defaults keylessDataSources to empty', async () => {
+    const trading = await writeConfigSection('trading', {}) as {
+      mode?: string
+      observeExternalOrdersEvery: string
+      keylessDataSources: string[]
+    }
+    expect(trading.mode).toBeUndefined()
+    expect(trading.observeExternalOrdersEvery).toBe('15m')
+    expect(trading.keylessDataSources).toEqual([])
   })
 
-  it('accepts valid profile-based config', () => {
-    expect(() => aiProviderSchema.parse({
-      profiles: { test: { backend: 'codex', label: 'Test', model: 'gpt-5.4', loginMethod: 'codex-oauth' } },
-      activeProfile: 'test',
-    })).not.toThrow()
+  it('persists explicit keyless data-source choices', async () => {
+    const trading = await writeConfigSection('trading', {
+      observeExternalOrdersEvery: 'off',
+      mode: 'readonly',
+      keylessDataSources: ['binance', 'okx'],
+    }) as {
+      mode?: string
+      observeExternalOrdersEvery: string
+      keylessDataSources: string[]
+    }
+    expect(trading.mode).toBe('readonly')
+    expect(trading.keylessDataSources).toEqual(['binance', 'okx'])
   })
 })
 
-describe('profileSchema', () => {
-  it('validates agent-sdk profile', () => {
-    const result = profileSchema.parse({ backend: 'agent-sdk', label: 'Claude', model: 'claude-opus-4-6', loginMethod: 'claudeai' })
-    expect(result.backend).toBe('agent-sdk')
+// ==================== aiProviderSchema (Zod schema validation) ====================
+
+describe('aiProviderSchema (credential vault)', () => {
+  it('uses defaults for empty object (empty vault)', () => {
+    const result = aiProviderSchema.parse({})
+    expect(result.credentials).toEqual({})
+    expect(result.apiKeys).toEqual({})
   })
 
-  it('validates codex profile', () => {
-    const result = profileSchema.parse({ backend: 'codex', label: 'GPT', model: 'gpt-5.4' })
-    expect(result.backend).toBe('codex')
-    if (result.backend === 'codex') expect(result.loginMethod).toBe('codex-oauth') // default
-  })
-
-  it('validates vercel profile', () => {
-    const result = profileSchema.parse({ backend: 'vercel-ai-sdk', label: 'Gemini', provider: 'google', model: 'gemini-2.5-flash' })
-    expect(result.backend).toBe('vercel-ai-sdk')
-  })
-
-  it('rejects unknown backend', () => {
-    expect(() => profileSchema.parse({ backend: 'unknown', label: 'X', model: 'y' })).toThrow()
-  })
-
-  it('accepts credentialSlug', () => {
-    const result = profileSchema.parse({
-      backend: 'agent-sdk', model: 'claude-opus-4-7', loginMethod: 'api-key',
-      credentialSlug: 'anthropic-1',
-    })
-    if (result.backend === 'agent-sdk') {
-      expect(result.credentialSlug).toBe('anthropic-1')
-    }
+  it('accepts a credentials map', () => {
+    expect(() => aiProviderSchema.parse({
+      credentials: { 'openai-1': { vendor: 'openai', authType: 'api-key', apiKey: 'sk' } },
+    })).not.toThrow()
   })
 })
 
@@ -358,55 +337,25 @@ describe('credentialSchema', () => {
   it('rejects unknown vendor', () => {
     expect(() => credentialSchema.parse({ vendor: 'fake', authType: 'api-key' })).toThrow()
   })
-})
 
-// ==================== resolveProfile (with credential join) ====================
-
-describe('resolveProfile', () => {
-  it('returns inline shape when credentialSlug is absent', async () => {
-    fileReturns({
-      profiles: { default: { backend: 'agent-sdk', model: 'claude-opus-4-7', loginMethod: 'api-key', apiKey: 'inline-key' } },
-      activeProfile: 'default',
-    })
-    const r = await resolveProfile()
-    expect(r.apiKey).toBe('inline-key')
-    expect(r.baseUrl).toBeUndefined()
+  it('normalizes empty / whitespace baseUrl to undefined (dedup invariant)', () => {
+    // The dedup predicate compares baseUrl with ===, so '' must collapse to
+    // undefined or a default-endpoint cred would duplicate. See
+    // feedback_optional_empty_string.
+    expect(credentialSchema.parse({ vendor: 'glm', authType: 'api-key', apiKey: 'k', baseUrl: '' }).baseUrl).toBeUndefined()
+    expect(credentialSchema.parse({ vendor: 'glm', authType: 'api-key', apiKey: 'k', baseUrl: '   ' }).baseUrl).toBeUndefined()
   })
 
-  it('joins credential when credentialSlug is set and inline is absent', async () => {
-    fileReturns({
-      credentials: { 'anthropic-1': { vendor: 'anthropic', authType: 'api-key', apiKey: 'cred-key', baseUrl: 'https://api.example/' } },
-      profiles: { default: { backend: 'agent-sdk', model: 'm', loginMethod: 'api-key', credentialSlug: 'anthropic-1' } },
-      activeProfile: 'default',
-    })
-    const r = await resolveProfile()
-    expect(r.apiKey).toBe('cred-key')
-    expect(r.baseUrl).toBe('https://api.example/')
+  it('trims and keeps a real baseUrl (region stays distinct)', () => {
+    expect(credentialSchema.parse({ vendor: 'glm', authType: 'api-key', apiKey: 'k', baseUrl: '  https://api.z.ai/api/anthropic ' }).baseUrl)
+      .toBe('https://api.z.ai/api/anthropic')
   })
 
-  it('inline value wins over credential value (transitional fallback semantics)', async () => {
-    fileReturns({
-      credentials: { 'anthropic-1': { vendor: 'anthropic', authType: 'api-key', apiKey: 'cred-key' } },
-      profiles: {
-        default: {
-          backend: 'agent-sdk', model: 'm', loginMethod: 'api-key',
-          apiKey: 'inline-wins',
-          credentialSlug: 'anthropic-1',
-        },
-      },
-      activeProfile: 'default',
-    })
-    const r = await resolveProfile()
-    expect(r.apiKey).toBe('inline-wins')
-  })
-
-  it('throws when credentialSlug references missing credential', async () => {
-    fileReturns({
-      credentials: {},
-      profiles: { default: { backend: 'agent-sdk', model: 'm', loginMethod: 'api-key', credentialSlug: 'ghost' } },
-      activeProfile: 'default',
-    })
-    await expect(resolveProfile()).rejects.toThrow(/missing credential/)
+  it('persists wireShape (disambiguates same-baseUrl shapes, e.g. OpenAI chat vs responses)', () => {
+    expect(credentialSchema.parse({ vendor: 'openai', authType: 'api-key', apiKey: 'k', wireShape: 'openai-responses' }).wireShape)
+      .toBe('openai-responses')
+    expect(credentialSchema.parse({ vendor: 'anthropic', authType: 'api-key', apiKey: 'k' }).wireShape).toBeUndefined()
+    expect(() => credentialSchema.parse({ vendor: 'openai', authType: 'api-key', apiKey: 'k', wireShape: 'bogus' })).toThrow()
   })
 })
 
@@ -435,82 +384,11 @@ describe('resolveCredential', () => {
 })
 
 describe('deleteCredential', () => {
-  it('errors when a profile still references the credential', async () => {
-    fileReturns({
-      credentials: { 'anthropic-1': { vendor: 'anthropic', authType: 'api-key', apiKey: 'k' } },
-      profiles: {
-        default: { backend: 'agent-sdk', model: 'm', loginMethod: 'api-key', credentialSlug: 'anthropic-1' },
-      },
-      activeProfile: 'default',
-    })
-    await expect(deleteCredential('anthropic-1')).rejects.toThrow(/referenced by profile/)
-  })
-
-  it('deletes when no profile references it', async () => {
+  it('removes the credential from the vault', async () => {
     fileReturns({
       credentials: { 'orphan-1': { vendor: 'openai', authType: 'api-key', apiKey: 'k' } },
-      profiles: { default: { backend: 'agent-sdk', model: 'm', loginMethod: 'claudeai' } },
-      activeProfile: 'default',
     })
     await expect(deleteCredential('orphan-1')).resolves.toBeUndefined()
     expect(mockWriteFile).toHaveBeenCalled()
-  })
-})
-
-// ==================== extractCredentialFromProfile ====================
-
-describe('extractCredentialFromProfile', () => {
-  it('passes through profile when credentialSlug already set', () => {
-    const profile = { backend: 'agent-sdk', model: 'm', loginMethod: 'api-key', apiKey: 'k', credentialSlug: 'existing' } as Profile
-    const out = extractCredentialFromProfile(profile, {})
-    expect(out.profile).toBe(profile)
-    expect(out.credentials).toEqual({})
-  })
-
-  it('passes through profile when nothing extractable (no apiKey, not subscription)', () => {
-    const profile = { backend: 'agent-sdk', model: 'm', loginMethod: 'api-key' } as Profile
-    const out = extractCredentialFromProfile(profile, {})
-    expect(out.profile.credentialSlug).toBeUndefined()
-    expect(out.credentials).toEqual({})
-  })
-
-  it('creates a new credential and links via slug when no match exists', () => {
-    const profile = {
-      backend: 'agent-sdk', model: 'm', loginMethod: 'api-key',
-      apiKey: 'sk-deep', baseUrl: 'https://api.deepseek.com/anthropic',
-    } as Profile
-    const out = extractCredentialFromProfile(profile, {})
-    expect(out.profile.credentialSlug).toBe('deepseek-1')
-    expect(out.credentials['deepseek-1']).toEqual({
-      vendor: 'deepseek',
-      authType: 'api-key',
-      apiKey: 'sk-deep',
-      baseUrl: 'https://api.deepseek.com/anthropic',
-    })
-  })
-
-  it('reuses existing credential slug when fields match (dedup)', () => {
-    const existing = {
-      'deepseek-1': { vendor: 'deepseek' as const, authType: 'api-key' as const, apiKey: 'sk-d', baseUrl: 'https://api.deepseek.com/anthropic' },
-    }
-    const profile = {
-      backend: 'agent-sdk', model: 'm', loginMethod: 'api-key',
-      apiKey: 'sk-d', baseUrl: 'https://api.deepseek.com/anthropic',
-    } as Profile
-    const out = extractCredentialFromProfile(profile, existing)
-    expect(out.profile.credentialSlug).toBe('deepseek-1')
-    expect(out.credentials).toBe(existing) // reference equality — no new entry
-  })
-
-  it('generates next available slug when vendor matches but fields differ', () => {
-    const existing = {
-      'anthropic-1': { vendor: 'anthropic' as const, authType: 'api-key' as const, apiKey: 'sk-1' },
-    }
-    const profile = {
-      backend: 'agent-sdk', model: 'm', loginMethod: 'api-key', apiKey: 'sk-2',
-    } as Profile
-    const out = extractCredentialFromProfile(profile, existing)
-    expect(out.profile.credentialSlug).toBe('anthropic-2')
-    expect(out.credentials['anthropic-2'].apiKey).toBe('sk-2')
   })
 })

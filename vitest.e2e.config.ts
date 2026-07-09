@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const workspaceAliases = {
   '@': resolve(__dirname, './src'),
   '@traderalice/ibkr': resolve(__dirname, './packages/ibkr/src/index.ts'),
+  '@traderalice/uta-protocol': resolve(__dirname, './packages/uta-protocol/src/index.ts'),
   '@traderalice/opentypebb/server': resolve(__dirname, './packages/opentypebb/src/server.ts'),
   '@traderalice/opentypebb': resolve(__dirname, './packages/opentypebb/src/index.ts'),
 }
@@ -20,7 +21,7 @@ export default {
     alias: workspaceAliases,
   },
   test: {
-    include: ['src/**/*.e2e.spec.*'],
+    include: ['src/**/*.e2e.spec.*', 'services/**/*.e2e.spec.*'],
     testTimeout: 60_000,
     fileParallelism: false,
     pool: 'forks',

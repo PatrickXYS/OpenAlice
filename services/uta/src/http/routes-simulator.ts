@@ -17,7 +17,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import type { EngineContext } from '@/core/types.js'
+import type { UTAEngineContext } from '../types.js'
 import { MockBroker } from '../domain/trading/brokers/mock/MockBroker.js'
 import { SEC_TYPES, type SecType } from '../domain/trading/contract-discipline.js'
 
@@ -79,7 +79,7 @@ const externalTradeSchema = z.object({
 // ==================== Helpers ====================
 
 /** Resolve :id → UTA whose broker is a MockBroker. Returns error response on miss. */
-function resolveMock(ctx: EngineContext, c: Context): { broker: MockBroker } | { error: Response } {
+function resolveMock(ctx: UTAEngineContext, c: Context): { broker: MockBroker } | { error: Response } {
   const id = c.req.param('id')
   if (!id) return { error: c.json({ error: 'Missing UTA id' }, 400) }
   const uta = ctx.utaManager.get(id)
@@ -102,7 +102,7 @@ async function parseBody<T extends z.ZodTypeAny>(c: Context, schema: T): Promise
 
 // ==================== Routes ====================
 
-export function createSimulatorRoutes(ctx: EngineContext) {
+export function createSimulatorRoutes(ctx: UTAEngineContext) {
   const app = new Hono()
 
   /** List all simulator-capable UTAs. */

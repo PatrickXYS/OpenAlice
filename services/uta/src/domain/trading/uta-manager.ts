@@ -65,6 +65,9 @@ export class UTAManager {
     const savedState = await loadGitState(cfg.id)
     const uta = new UnifiedTradingAccount(broker, {
       guards: cfg.guards,
+      keyless: cfg.keyless,
+      readOnly: cfg.readOnly,
+      asVendor: cfg.asVendor,
       savedState,
       onCommit: createGitPersister(cfg.id),
       onHealthChange: (utaId, health) => {
@@ -160,6 +163,7 @@ export class UTAManager {
     return Array.from(this.entries.values()).map((uta) => ({
       id: uta.id,
       label: uta.label,
+      asVendor: uta.asVendor,
       capabilities: uta.getCapabilities(),
       health: uta.getHealthInfo(),
     }))
@@ -201,7 +205,9 @@ export class UTAManager {
 
   async getAggregatedEquity(): Promise<AggregatedEquity> {
     const results = await Promise.all(
-      Array.from(this.entries.values()).map(async (uta) => {
+      // Keyless (public-data-only) UTAs have no account — skip them so they
+      // don't add a phantom $0 account to the aggregate.
+      Array.from(this.entries.values()).filter((uta) => !uta.keyless).map(async (uta) => {
         if (uta.health !== 'healthy') {
           uta.nudgeRecovery()
           return { id: uta.id, label: uta.label, health: uta.health, info: null }
@@ -270,7 +276,7 @@ export class UTAManager {
   ): Promise<ContractSearchResult[]> {
     const targets = accountId
       ? [this.entries.get(accountId)].filter(Boolean) as UnifiedTradingAccount[]
-      : Array.from(this.entries.values())
+      : Array.from(this.entries.values()).filter((uta) => uta.asVendor !== false)
 
     const results = await Promise.all(
       targets.map(async (uta) => {

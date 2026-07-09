@@ -8,6 +8,13 @@
 import { Contract, OrderState } from '@traderalice/ibkr'
 import '../../contract-ext.js'
 import { buildContract } from '../contract-builder.js'
+import type { BarInterval } from '../types.js'
+
+/** Normalized BarInterval → Alpaca v2 timeframe string. */
+export const ALPACA_TIMEFRAME: Record<BarInterval, string> = {
+  '1m': '1Min', '5m': '5Min', '15m': '15Min', '30m': '30Min',
+  '1h': '1Hour', '4h': '4Hour', '1d': '1Day', '1w': '1Week',
+}
 
 /** Build a fully qualified IBKR Contract for an Alpaca ticker. */
 export function makeContract(ticker: string): Contract {

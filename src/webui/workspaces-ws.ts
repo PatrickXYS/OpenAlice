@@ -84,6 +84,7 @@ export function attachWorkspacesWS(httpServer: HttpServer, svc: WorkspaceService
     if (!isOriginAllowed(req, svc)) {
       launcherLogger.warn('upgrade.origin_rejected', {
         origin: req.headers.origin ?? null,
+        host: req.headers.host ?? null,
         remoteAddress: req.socket.remoteAddress ?? null,
       });
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
@@ -119,6 +120,9 @@ export function attachWorkspacesWS(httpServer: HttpServer, svc: WorkspaceService
     const rows = clampQuery(url.searchParams.get('rows'), 24, 1, 1000);
     const sinceRaw = url.searchParams.get('since');
     const since = sinceRaw === null ? undefined : parseSince(sinceRaw);
+    const controllerId = cleanToken(url.searchParams.get('client'), 128);
+    const controllerKind = cleanToken(url.searchParams.get('kind'), 32) ?? 'web';
+    const takeover = url.searchParams.get('takeover') === '1';
 
     const sessionId = (url.searchParams.get('session') ?? '').slice(0, 64);
     if (!sessionId) {
@@ -132,17 +136,36 @@ export function attachWorkspacesWS(httpServer: HttpServer, svc: WorkspaceService
       try { ws.close(4404, 'session not found'); } catch { /* ignore */ }
       return;
     }
-    launcherLogger.info('upgrade.accepted', {
+    launcherLogger.event('upgrade.accepted', {
       sessionId,
       wsId: session.wsId,
       cols,
       rows,
       since: since ?? null,
+      controllerId: controllerId ?? null,
+      controllerKind,
+      takeover,
       origin: req.headers.origin ?? null,
+      // Host the browser actually connected to. Discriminates the dev
+      // transport: `localhost:<backendPort>` = direct (proxy bypassed),
+      // `localhost:5173` = forwarded through the Vite dev proxy (which
+      // preserves the inbound Host). origin stays 5173 either way, so host is
+      // the only field that tells them apart.
+      host: req.headers.host ?? null,
       remoteAddress: req.socket.remoteAddress ?? null,
     });
     try {
-      svc.pool.attachById(sessionId, ws, cols, rows, since);
+      const result = svc.pool.attachById(
+        sessionId,
+        ws,
+        cols,
+        rows,
+        since,
+        controllerId ? { controllerId, controllerKind, takeover } : undefined,
+      );
+      if (!result.ok && result.reason === 'missing') {
+        try { ws.close(4404, 'session not found'); } catch { /* ignore */ }
+      }
     } catch (err) {
       launcherLogger.error('pool.attach_failed', { sessionId, err });
       try { ws.close(1011, 'attach failed'); } catch { /* ignore */ }
@@ -158,11 +181,38 @@ export function attachWorkspacesWS(httpServer: HttpServer, svc: WorkspaceService
 }
 
 function isOriginAllowed(req: IncomingMessage, svc: WorkspaceService): boolean {
-  const cfg = svc.config;
+  return isWsOriginAllowed(req.headers.origin, req.headers.host, svc.config);
+}
+
+/**
+ * Origin gate for the PTY WS upgrade. Mirrors the HTTP middleware's CSRF
+ * rule (`isAllowedOrigin` in middleware/auth.ts): a same-origin request —
+ * Origin host equal to the Host the browser actually connected to — is
+ * always allowed, so direct access through any bind (LAN IP, Tailscale
+ * IP, a domain) works without configuration. A browser's Origin is not
+ * forgeable from a foreign page, so this admits exactly the pages we
+ * served ourselves. The static allowlist covers cross-origin topologies
+ * (the Vite dev port — Guardian-resolved, 5173 by default — and the future
+ * cloud demo) and stays env-extensible via WEB_TERMINAL_ALLOWED_ORIGINS.
+ */
+export function isWsOriginAllowed(
+  origin: string | undefined,
+  host: string | undefined,
+  cfg: { readonly allowAnyOrigin: boolean; readonly allowedOrigins: ReadonlySet<string> },
+): boolean {
   if (cfg.allowAnyOrigin) return true;
-  const origin = req.headers.origin;
+  // Non-browser callers (websocat, CLI tooling) send no Origin — allowed
+  // here; the auth gate still applies.
   if (typeof origin !== 'string' || origin.length === 0) return true;
-  return cfg.allowedOrigins.has(origin);
+  if (cfg.allowedOrigins.has(origin)) return true;
+  if (host) {
+    try {
+      return new URL(origin).host === host;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function clampQuery(raw: string | null, fallback: number, lo: number, hi: number): number {
@@ -178,4 +228,10 @@ function parseSince(raw: string): number | undefined {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 0) return undefined;
   return n;
+}
+
+function cleanToken(raw: string | null, max: number): string | undefined {
+  if (raw === null) return undefined;
+  const value = raw.trim().slice(0, max);
+  return value.length > 0 ? value : undefined;
 }

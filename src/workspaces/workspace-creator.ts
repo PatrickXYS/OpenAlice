@@ -1,10 +1,18 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { exec as gitExec } from 'dugite';
+
+import { readCredentials, readWorkspaceCredentialDefaults } from '@/core/config.js';
+
 import type { AdapterRegistry } from './cli-adapter.js';
+import { injectWorkspaceContext } from './context-injector.js';
+import { injectWorkspaceCredentials } from './credential-injection.js';
 import type { Logger } from './logger.js';
-import type { TemplateRegistry } from './template-registry.js';
+import { generatePetnameId } from './petname-id.js';
+import type { AgentCredentialDecl, TemplateRegistry } from './template-registry.js';
 import type { WorkspaceMeta, WorkspaceRegistry } from './workspace-registry.js';
 
 export interface BootstrapEnv {
@@ -36,6 +44,7 @@ export type CreateResult =
         | 'invalid_tag'
         | 'tag_in_use'
         | 'bootstrap_failed'
+        | 'injection_failed'
         | 'unknown_template'
         | 'unknown_agent';
       readonly message: string;
@@ -44,6 +53,35 @@ export type CreateResult =
     };
 
 const TAG_RE = /^[a-z0-9][a-z0-9_-]{0,32}$/;
+
+/**
+ * Resolve the adapter set a new workspace is created with. This is the single
+ * home of the agent policy, so every create path — the form, quick-chat,
+ * headless — converges on it:
+ *
+ * - An explicit `agentsRequested` (a caller pinning a subset) wins verbatim.
+ * - Otherwise a workspace gets EVERY registered adapter enabled; restricting
+ *   it was a create-time decision with no first-action basis. The template's
+ *   `defaultAgents` is honored as an ordering hint for agent runtimes, while
+ *   utility adapters such as `shell` are kept at the tail so they never become
+ *   an implicit workload.
+ *
+ * This used to live in the frontend create hook alone, which silently left
+ * backend-only callers (quick-chat) on the bare-`defaultAgents` set.
+ */
+export function resolveCreateAgents(
+  agentsRequested: readonly string[] | undefined,
+  templateDefaultAgents: readonly string[],
+  allAdapterIds: readonly string[],
+): readonly string[] {
+  if (agentsRequested && agentsRequested.length > 0) return agentsRequested;
+  const utility = new Set(['shell']);
+  const ordered = [...new Set([...templateDefaultAgents, ...allAdapterIds])];
+  return [
+    ...ordered.filter((id) => !utility.has(id)),
+    ...ordered.filter((id) => utility.has(id)),
+  ];
+}
 
 /**
  * Creates a workspace by invoking the template's bootstrap script.
@@ -81,9 +119,13 @@ export class WorkspaceCreator {
       };
     }
 
-    const agents = agentsRequested && agentsRequested.length > 0
-      ? agentsRequested
-      : template.defaultAgents;
+    // Agent policy lives in `resolveCreateAgents` (this file) so every create
+    // path — form, quick-chat, headless — converges on it.
+    const agents = resolveCreateAgents(
+      agentsRequested,
+      template.defaultAgents,
+      this.opts.adapterRegistry.list().map((a) => a.id),
+    );
 
     // Validate every requested adapter exists in the registry.
     for (const a of agents) {
@@ -96,7 +138,12 @@ export class WorkspaceCreator {
       }
     }
 
-    const id = randomUUID();
+    const id = generatePetnameId(templateName, {
+      fallbackPrefix: 'workspace',
+      isTaken: (candidate) =>
+        this.opts.registry.hasId(candidate) ||
+        existsSync(join(this.opts.workspacesRoot, candidate)),
+    });
     const dir = join(this.opts.workspacesRoot, id);
     const log = this.opts.logger.child({ tag, id, dir, template: templateName, agents });
 
@@ -123,12 +170,47 @@ export class WorkspaceCreator {
         exitCode: result.exitCode,
         stderr: result.stderr.slice(0, 4000),
       });
+      // Surface the actual reason in the message, not just the exit code —
+      // a null exit code (spawn failure: bash-not-found on Windows, timeout)
+      // rendered as "code unknown" tells the user nothing, while result.stderr
+      // already carries the why (e.g. the Git-for-Windows install hint).
+      const reason = result.stderr.trim();
+      const headline =
+        result.exitCode === null
+          ? 'bootstrap could not start'
+          : `bootstrap script exited with code ${result.exitCode}`;
       return {
         ok: false,
         code: 'bootstrap_failed',
-        message: `bootstrap script exited with code ${result.exitCode ?? 'unknown'}`,
+        message: reason ? `${headline}:\n${reason.slice(-500)}` : headline,
         stderr: result.stderr,
         ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+      };
+    }
+
+    // Launcher-owned context injection (MCP / persona / skills, gated by the
+    // template manifest), then the initial commit. The launcher — not the
+    // bootstrap script — owns what lands in the workspace's first commit.
+    try {
+      await injectWorkspaceContext({ template, wsId: id, dir });
+    } catch (err) {
+      log.warn('inject.failed', { err });
+      await rm(dir, { recursive: true, force: true });
+      return {
+        ok: false,
+        code: 'injection_failed',
+        message: `context injection failed: ${(err as Error).message}`,
+      };
+    }
+    try {
+      await commitInitial(dir, `${templateName}: ${tag}`);
+    } catch (err) {
+      log.warn('initial_commit.failed', { err });
+      await rm(dir, { recursive: true, force: true });
+      return {
+        ok: false,
+        code: 'injection_failed',
+        message: `initial commit failed: ${(err as Error).message}`,
       };
     }
 
@@ -150,6 +232,36 @@ export class WorkspaceCreator {
       }
     }
 
+    // Credential seeding — runs POST-commit so the secret never lands in the
+    // initial commit (the adapter config files are kept out of git by
+    // `_common.sh`'s excludes; post-commit is the belt-and-braces). The source
+    // is the user's per-agent workspace defaults (Settings › AI Provider) merged
+    // with any template-declared `agentCredentials` — the template wins per agent
+    // (explicit per-template intent), though in practice no in-repo template
+    // declares them, so the user defaults are the effective source. Best-effort:
+    // a miss (disabled agent, dangling slug, incompatible wire) warns + skips,
+    // the workspace stays usable.
+    try {
+      const userDefaults = await readWorkspaceCredentialDefaults();
+      const effective: Record<string, AgentCredentialDecl> = {
+        ...userDefaults,
+        ...(template.agentCredentials ?? {}),
+      };
+      if (Object.keys(effective).length > 0) {
+        const credentials = await readCredentials();
+        await injectWorkspaceCredentials({
+          dir,
+          agents,
+          agentCredentials: effective,
+          adapterRegistry: this.opts.adapterRegistry,
+          credentials,
+          logger: log,
+        });
+      }
+    } catch (err) {
+      log.warn('cred_inject.failed', { err });
+    }
+
     const workspace: WorkspaceMeta = {
       id,
       tag,
@@ -165,6 +277,34 @@ export class WorkspaceCreator {
   }
 }
 
+/**
+ * The launcher's initial commit — uniform across templates (the "Harness rule":
+ * every workspace is a fresh-git repo with a clean initial commit, no inherited
+ * history, no pushable remote). Replaces the old per-template `commit_initial`
+ * bash helper, byte-identical in message + author. The bootstrap script has
+ * already run `git init` and set excludes; we just stage and commit.
+ */
+export async function commitInitial(dir: string, message: string): Promise<void> {
+  await runGit(dir, ['add', '.']);
+  await runGit(dir, [
+    '-c', 'user.email=launcher@local',
+    '-c', 'user.name=launcher',
+    'commit', '-q', '-m', message,
+  ]);
+}
+
+// Routes through the bundled git (dugite) so the launcher's initial commit
+// needs no system git — same reason the bootstrap scripts use _common.mjs's
+// git(). dugite resolves with an exitCode (it only rejects when git fails to
+// launch), so a non-zero exit is turned into a throw to preserve the old
+// reject-on-failure contract.
+async function runGit(dir: string, args: readonly string[]): Promise<void> {
+  const r = await gitExec([...args], dir);
+  if (r.exitCode !== 0) {
+    throw new Error(`git ${args[0] ?? ''} exited ${r.exitCode}: ${String(r.stderr).slice(0, 500)}`);
+  }
+}
+
 interface RunResult {
   readonly ok: boolean;
   readonly stdout: string;
@@ -173,9 +313,10 @@ interface RunResult {
 }
 
 const WINDOWS_BASH_HINT =
-  'hint: bash not found on PATH. Install Git for Windows (accept the default ' +
-  '"Use Git from the Windows Command Prompt" option) from https://gitforwindows.org/, ' +
-  'or run OpenAlice from inside WSL2.';
+  'hint: this template ships a bash bootstrap script. OpenAlice\'s built-in ' +
+  'templates (chat, auto-quant) need no bash — only third-party templates do. ' +
+  'To use this one, install Git for Windows from https://gitforwindows.org/ so ' +
+  'bash is on PATH, or run OpenAlice from inside WSL2.';
 
 /**
  * Run a bootstrap script.
@@ -196,13 +337,25 @@ export function runScript(
   extraEnv: { [key: string]: string },
   timeoutMs: number,
 ): Promise<RunResult> {
+  const isMjs = script.endsWith('.mjs');
   const isWindows = process.platform === 'win32';
-  const cmd = isWindows ? 'bash' : script;
-  const cmdArgs = isWindows ? [script, ...args] : args;
+
+  // `.mjs` (built-in templates): run on the Electron-bundled Node. In the
+  // packaged app `process.execPath` is the Electron binary; ELECTRON_RUN_AS_NODE
+  // flips it to pure-Node mode (a harmless no-op for a plain `node` execPath in
+  // dev). No bash, no shebang reliance → works on a bare Windows/Mac box.
+  // `.sh` (third-party fallback): unix reads the `#!/usr/bin/env bash` shebang;
+  // Windows has no native bash, so we invoke `bash <script>` explicitly, which
+  // requires bash on PATH (Git for Windows / WSL).
+  const cmd = isMjs ? process.execPath : isWindows ? 'bash' : script;
+  const cmdArgs = isMjs || isWindows ? [script, ...args] : args;
+  const env = isMjs
+    ? { ...process.env, ...extraEnv, ELECTRON_RUN_AS_NODE: '1' }
+    : { ...process.env, ...extraEnv };
 
   return new Promise((resolve) => {
     const child = spawn(cmd, cmdArgs, {
-      env: { ...process.env, ...extraEnv },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -225,10 +378,11 @@ export function runScript(
     child.on('error', (err) => {
       clearTimeout(timer);
       const errMsg = (err as Error).message;
-      // ENOENT on Windows when we tried `bash` means Git Bash / WSL bash
-      // isn't on PATH — surface the install hint right next to the failure.
+      // ENOENT on Windows when we tried `bash` (a `.sh` third-party template)
+      // means Git Bash / WSL bash isn't on PATH — surface the install hint.
+      // Built-in `.mjs` templates run on the bundled Node and never hit this.
       const hinted =
-        isWindows && /ENOENT/i.test(errMsg) ? `${errMsg}\n${WINDOWS_BASH_HINT}` : errMsg;
+        !isMjs && isWindows && /ENOENT/i.test(errMsg) ? `${errMsg}\n${WINDOWS_BASH_HINT}` : errMsg;
       resolve({
         ok: false,
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),

@@ -1,6 +1,7 @@
-import { Cpu, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
+import { Bot, Code, Cpu, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
-import type { TemplateInfo } from './api'
+import type { AgentInfo, TemplateInfo } from './api'
 
 /**
  * Catalog card for a workspace template. Mirrors the visual idiom of
@@ -12,6 +13,8 @@ import type { TemplateInfo } from './api'
 const AGENT_ICONS: Record<string, LucideIcon> = {
   claude: Sparkles,
   codex: Cpu,
+  opencode: Code,
+  pi: Bot,
   shell: Terminal,
 }
 
@@ -33,10 +36,14 @@ function humanize(name: string): string {
 
 interface Props {
   template: TemplateInfo
+  /** All registered agents — every workspace enables all of them, so the card
+   *  shows the full set (not a per-template subset). */
+  agents: readonly AgentInfo[]
   onOpen: () => void
 }
 
-export function TemplateCard({ template: t, onOpen }: Props) {
+export function TemplateCard({ template: t, agents, onOpen }: Props) {
+  const { t: tr } = useTranslation()
   const title = t.displayName ?? humanize(t.name)
   return (
     <button
@@ -53,6 +60,11 @@ export function TemplateCard({ template: t, onOpen }: Props) {
             <span className="text-[11px] font-mono text-text-muted tabular-nums">
               v{t.version}
             </span>
+            {t.community && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-text-muted">
+                {tr('templates.communityBadge')}
+              </span>
+            )}
           </div>
           {t.description && (
             <p className="text-[12px] text-text-muted line-clamp-3 mt-1">
@@ -62,17 +74,26 @@ export function TemplateCard({ template: t, onOpen }: Props) {
         </div>
       </div>
 
-      <div className="border-t border-border pt-3 flex items-center gap-3">
+      <div className="border-t border-border pt-3 flex items-center gap-3 flex-wrap">
         <div className="text-[10px] uppercase tracking-wider text-text-muted/70">
-          Default agents
+          {tr('templates.agentsLabel')}
         </div>
-        <div className="flex items-center gap-2 text-text-muted">
-          {t.defaultAgents.map((a) => (
-            <span key={a} className="flex items-center gap-1 text-[11px]">
-              <AgentGlyph agent={a} />
-              <span>{a}</span>
-            </span>
-          ))}
+        <div className="flex items-center gap-2 text-text-muted flex-wrap">
+          {agents.map((a) => {
+            // Backend PATH-probes each runtime; dim the ones not installed on
+            // this host so the catalog hints at what needs setting up.
+            const missing = a.installed === false
+            return (
+              <span
+                key={a.id}
+                className={`flex items-center gap-1 text-[11px] ${missing ? 'opacity-40' : ''}`}
+                title={missing ? `${a.id} — ${tr('templates.agentNotInstalled')}` : a.id}
+              >
+                <AgentGlyph agent={a.id} />
+                <span className={missing ? 'line-through' : ''}>{a.id}</span>
+              </span>
+            )
+          })}
         </div>
       </div>
     </button>

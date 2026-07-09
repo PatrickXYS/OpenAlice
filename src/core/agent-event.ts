@@ -16,10 +16,26 @@
 
 import { Type, type TSchema } from '@sinclair/typebox'
 import AjvPkg from 'ajv'
-import type { NotificationSource } from './notifications-store.js'
 
-// Re-export CronFirePayload from its canonical location
-export type { CronFirePayload } from '../task/cron/engine.js'
+// The cron engine was retired (workspace self-scheduling replaced it). The
+// `cron.fire` event type stays defined here as the event bus's canonical sample
+// event (kept so the bus specs don't churn); it has no producer/listener now.
+export interface CronFirePayload {
+  jobId: string
+  jobName: string
+  payload: string
+  workspaceId?: string
+  agent?: string
+}
+
+/**
+ * Which trigger source produced an AgentWork request — the routing key
+ * the agent-work-listener uses to pick a source config. Canonical home
+ * for this union (it used to live in the now-deleted notifications-store
+ * as `NotificationSource`). Kept in lockstep with the TypeBox
+ * `SourceUnion` literals below.
+ */
+export type AgentWorkSource = 'heartbeat' | 'cron' | 'task' | 'manual'
 
 // ==================== Payload Interfaces ====================
 
@@ -39,18 +55,17 @@ export interface MessageSentPayload {
 
 // ==================== Canonical AgentWork events ====================
 //
-// All "Alice runs an async task" flows funnel through these four
-// canonical events instead of per-trigger-source event types. The
-// `source` field on each payload is the routing key — consumers
-// filter on it instead of subscribing to separate event types.
-//
-// `agent.work.requested` is externally-ingestable (webhook). The
-// done/skip/error events are internal-only.
+// DORMANT since World B was deleted: the in-process consumer
+// (agent-work-listener) is gone, so nothing acts on these today.
+// `agent.work.requested` is still externally-ingestable via the webhook
+// `/api/events/ingest` (it lands in the event log + Flow), kept so a future
+// webhook→headless-workspace listener can consume it without re-adding a wire
+// type. done/skip/error are no longer emitted by anyone. The `source` field is
+// the routing key consumers would filter on.
 
 export interface AgentWorkRequestedPayload {
-  /** Which trigger source produced this work request. Drives the
-   *  agent-work-listener's source-registry lookup. */
-  source: NotificationSource
+  /** Which trigger source produced this work request. */
+  source: AgentWorkSource
   /** The AI prompt to execute. */
   prompt: string
   /** Trigger-specific metadata, surfaced back on the canonical
@@ -59,7 +74,7 @@ export interface AgentWorkRequestedPayload {
 }
 
 export interface AgentWorkDonePayload {
-  source: NotificationSource
+  source: AgentWorkSource
   reply: string
   durationMs: number
   /** Did the notification actually reach the connector? */
@@ -68,7 +83,7 @@ export interface AgentWorkDonePayload {
 }
 
 export interface AgentWorkSkipPayload {
-  source: NotificationSource
+  source: AgentWorkSource
   /** Free-form reason — e.g. 'ack' | 'duplicate' | 'empty' |
    *  'outside-active-hours' | per-source extension. */
   reason: string
@@ -76,16 +91,13 @@ export interface AgentWorkSkipPayload {
 }
 
 export interface AgentWorkErrorPayload {
-  source: NotificationSource
+  source: AgentWorkSource
   error: string
   durationMs: number
   metadata?: Record<string, unknown>
 }
 
 // ==================== Event Map ====================
-
-// Import the actual CronFirePayload type for use in the map
-import type { CronFirePayload } from '../task/cron/engine.js'
 
 export interface AgentEventMap {
   'cron.fire': CronFirePayload
@@ -103,6 +115,9 @@ const CronFireSchema = Type.Object({
   jobId: Type.String(),
   jobName: Type.String(),
   payload: Type.String(),
+  // Dispatch target (headless workspace run). Optional for pre-headless jobs.
+  workspaceId: Type.Optional(Type.String()),
+  agent: Type.Optional(Type.String()),
 })
 
 const MessageReceivedSchema = Type.Object({
@@ -121,7 +136,7 @@ const MessageSentSchema = Type.Object({
 
 // ---- Canonical agent-work event schemas ----
 //
-// `source` is constrained to the NotificationSource union literal set.
+// `source` is constrained to the AgentWorkSource union literal set.
 // Free-form `metadata` is `unknown` at validation time (downstream
 // shape decided per-source).
 

@@ -11,6 +11,7 @@
 import type { ReactNode } from 'react'
 import { useAuth } from './AuthContext'
 import { LoginPage, NoTokenPage } from './LoginPage'
+import { Spinner } from '../components/StateViews'
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { state } = useAuth()
@@ -18,7 +19,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (state === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg">
-        <div className="text-[12px] text-text-muted">Loading…</div>
+        <Spinner />
       </div>
     )
   }

@@ -1,8 +1,7 @@
 /**
  * MCP Export — shared bridge from Vercel AI SDK tools to MCP format.
  *
- * Used by both `src/server/mcp.ts` (external MCP server) and
- * `src/ai-providers/agent-sdk/tool-bridge.ts` (Agent SDK in-process MCP).
+ * Used by `src/server/mcp.ts` (the external MCP server workspaces connect to).
  *
  * Handles:
  * - Zod shape extraction with number coercion (MCP clients may send "80" instead of 80)
@@ -91,6 +90,15 @@ function coerceIfNumber(schema: z.ZodType): z.ZodType {
     return coerced.optional()
   }
 
+  // z.number().default(N) / z.number().optional().default(N) — unwrap and
+  // re-wrap so CLI string flags ("50") still coerce. Without this, screener
+  // verbs like `alice analysis rs-pool --limit 50` fail validation.
+  if (def.type === 'default' && def.innerType) {
+    const inner = coerceIfNumber(def.innerType as z.ZodType)
+    if (inner === def.innerType) return schema
+    return (inner as any).default(def.defaultValue)
+  }
+
   return schema
 }
 
@@ -122,8 +130,11 @@ export function wrapToolExecute(tool: Tool): (args: any) => Promise<McpToolResul
       })
       return { content: toMcpContent(result) }
     } catch (err) {
+      // err.message, not `${err}` — a thrown Error stringifies to "Error: <msg>",
+      // which the `Error: ` prefix then doubled into "Error: Error: <msg>".
+      const message = err instanceof Error ? err.message : String(err)
       return {
-        content: [{ type: 'text' as const, text: `Error: ${err}` }],
+        content: [{ type: 'text' as const, text: `Error: ${message}` }],
         isError: true,
       }
     }

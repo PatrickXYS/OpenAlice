@@ -37,7 +37,7 @@ export interface Profile {
 
 export type CredentialVendor =
   | 'anthropic' | 'openai' | 'google'
-  | 'minimax' | 'glm' | 'kimi' | 'deepseek'
+  | 'minimax' | 'glm' | 'kimi' | 'deepseek' | 'longcat' | 'xai'
   | 'custom'
 
 export type CredentialAuthType = 'api-key' | 'subscription'
@@ -68,6 +68,15 @@ export interface SdkAdapterInfo {
 
 // ==================== AI Provider Presets ====================
 
+export type WireShape = 'anthropic' | 'openai-chat' | 'openai-responses'
+
+/** A region + the per-wire-shape endpoints it offers. */
+export interface SerializedRegion {
+  id: string
+  label: string
+  wires: Partial<Record<WireShape, string>>
+}
+
 export interface Preset {
   id: string
   label: string
@@ -76,6 +85,9 @@ export interface Preset {
   hint?: string
   defaultName: string
   schema: JsonSchema
+  /** Regions × their per-shape endpoints — the form picks a region; the
+   *  credential captures that region's whole wires map (its capabilities). */
+  regions?: SerializedRegion[]
 }
 
 /** Subset of JSON Schema types we use for form rendering. */
@@ -141,6 +153,9 @@ export type ChatHistoryItem =
 
 // ==================== Config ====================
 
+export type TradingMode = 'lite' | 'readonly' | 'pro'
+export type TradingModeSource = 'env' | 'config' | 'auto'
+
 export interface AIProviderConfig {
   apiKeys: { anthropic?: string; openai?: string; google?: string }
   profiles: Record<string, Profile>
@@ -150,13 +165,12 @@ export interface AIProviderConfig {
 export interface AppConfig {
   aiProvider: AIProviderConfig
   engine: Record<string, unknown>
-  agent: { evolutionMode: boolean; claudeCode: Record<string, unknown> }
+  agent: { allowAiTrading: boolean; claudeCode: Record<string, unknown> }
   compaction: { maxContextTokens: number; maxOutputTokens: number }
-  heartbeat: {
-    enabled: boolean
-    every: string
-    prompt: string
-    activeHours: { start: string; end: string; timezone: string } | null
+  trading: {
+    mode?: TradingMode
+    observeExternalOrdersEvery: string
+    keylessDataSources: Array<'binance' | 'okx' | 'bybit'>
   }
   snapshot: {
     enabled: boolean
@@ -175,6 +189,7 @@ export interface AppConfig {
  * stays under connectors.
  */
 export interface McpConfig {
+  enabled: boolean
   port: number
 }
 
@@ -264,47 +279,36 @@ export interface EventLogEntry {
   payload: unknown
 }
 
-// ==================== Cron ====================
-
-export type CronSchedule =
-  | { kind: 'at'; at: string }
-  | { kind: 'every'; every: string }
-  | { kind: 'cron'; cron: string }
-
-export interface CronJobState {
-  nextRunAtMs: number | null
-  lastRunAtMs: number | null
-  lastStatus: 'ok' | 'error' | null
-  consecutiveErrors: number
-}
-
-export interface CronJob {
-  id: string
-  name: string
-  enabled: boolean
-  schedule: CronSchedule
-  payload: string
-  state: CronJobState
-  createdAt: number
-}
-
 // ==================== Trading ====================
 
 export type BrokerHealth = 'healthy' | 'degraded' | 'offline'
 
+/** Capability ladder: 'down' < 'connected' (transport + public data) <
+ *  'readable' (private account read). Mirrors the UTA-protocol type. */
+export type UTAReach = 'down' | 'connected' | 'readable'
+/** What an account is for: keyless data source / read-only / writable. */
+export type UTATier = 'data' | 'account' | 'trading'
+
 export interface BrokerHealthInfo {
   status: BrokerHealth
+  reach: UTAReach
+  tier: UTATier
   consecutiveFailures: number
   lastError?: string
   lastSuccessAt?: string
   lastFailureAt?: string
   recovering: boolean
+  /** True while the account's initial broker connect is still in flight; the UI
+   *  renders a "connecting…" state off this (status is optimistically 'healthy'
+   *  during the window, so it can't be inferred from status/reach). */
+  connecting: boolean
   disabled: boolean
 }
 
 export interface UTASummary {
   id: string
   label: string
+  asVendor: boolean
   capabilities: { supportedSecTypes: string[]; supportedOrderTypes: string[] }
   health: BrokerHealthInfo
 }
@@ -315,15 +319,30 @@ export interface TradingAccount {
   label: string
 }
 
+/**
+ * Mirrors `AccountInfo` in packages/uta-protocol/src/types/broker.ts — keep
+ * the two in lockstep. The contract is the IBKR superset: brokers that don't
+ * report a field omit it (e.g. Alpaca has no realizedPnL; CCXT venues often
+ * have no buyingPower). The UI must omit those rows, never fabricate zeros.
+ */
 export interface AccountInfo {
   baseCurrency: string
   netLiquidation: string
   totalCashValue: string
   unrealizedPnL: string
-  realizedPnL: string
+  realizedPnL?: string
   buyingPower?: string
   initMarginReq?: string
   maintMarginReq?: string
+  dayTradesRemaining?: number
+}
+
+/** A sub-account (wallet) within one broker connection. One for ordinary
+ *  brokers; >1 for separate-wallet venues (Binance: spot / derivatives). */
+export interface SubAccountRef {
+  id: string
+  label: string
+  kind: 'spot' | 'derivatives' | 'unified'
 }
 
 export interface Position {
@@ -332,6 +351,13 @@ export interface Position {
     symbol?: string
     secType?: string
     exchange?: string
+    /** Primary listing exchange (e.g. NASDAQ, SEHK) — distinct from the
+     *  routing `exchange` (often SMART). Populated for equities; empty for
+     *  crypto. */
+    primaryExchange?: string
+    /** Instrument long-name (e.g. "Apple Inc"). Populated where the broker
+     *  exposes it (IBKR, Alpaca catalog); empty otherwise. */
+    description?: string
     currency?: string
     lastTradeDateOrContractMonth?: string
     strike?: number
@@ -349,6 +375,14 @@ export interface Position {
   marketValue: string
   unrealizedPnL: string
   realizedPnL: string
+  /** Leveraged-derivative risk metadata (crypto perps/futures). Absent for
+   *  spot and brokers without per-position leverage. Mirrors uta-protocol's
+   *  PositionRisk. */
+  risk?: {
+    leverage?: string
+    liquidationPrice?: string
+    marginMode?: 'cross' | 'isolated'
+  }
 }
 
 export interface WalletCommitLog {
@@ -397,6 +431,74 @@ export interface WalletPushResult {
   rejected: Array<{ action: string; success: boolean; error?: string; status: string }>
 }
 
+// ==================== Order / Trade History ====================
+//
+// Hand-mirrors packages/uta-protocol/src/types/history.ts — the UI does not
+// import uta-protocol, so keep these in lockstep with the wire types.
+
+/** Compact contract identity for history rows — IBKR-superset fields. */
+export interface HistoryContract {
+  aliceId?: string
+  symbol?: string
+  localSymbol?: string
+  secType?: string
+  currency?: string
+  exchange?: string
+  /** OPT/FOP/FUT: contract month or expiry (IBKR lastTradeDateOrContractMonth). */
+  expiry?: string
+  /** OPT/FOP: strike price (string — Decimal-safe). */
+  strike?: string
+  /** OPT/FOP: 'C' | 'P' (normalized). */
+  right?: string
+  multiplier?: string
+}
+
+export type OrderHistoryStatus = 'submitted' | 'filled' | 'cancelled' | 'rejected' | 'user-rejected'
+
+export type OrderHistorySource = 'alice' | 'external'
+
+export interface OrderHistoryEntry {
+  /** Broker order id (absent for rejected-before-submit). */
+  orderId?: string
+  /** When the order entered the log (push/observe time, ISO). */
+  timestamp: string
+  /** When the terminal transition was recorded, if any (sync/cancel time, ISO). */
+  resolvedAt?: string
+  contract: HistoryContract
+  side: 'BUY' | 'SELL'
+  orderType?: string
+  quantity?: string
+  limitPrice?: string
+  stopPrice?: string
+  status: OrderHistoryStatus
+  filledQty?: string
+  avgFillPrice?: string
+  /** 'external' = observed on the broker, not placed through Alice. */
+  source: OrderHistorySource
+  /** Commit that introduced the order — the audit pointer. */
+  commitHash: string
+  /** Commit message (user intent for Alice orders; [observed] for external). */
+  message: string
+  error?: string
+}
+
+export type TradeHistorySource = 'order' | 'external' | 'reconcile'
+
+export interface TradeHistoryEntry {
+  /** Fill record time (ISO) — push time for immediate fills, sync time otherwise. */
+  timestamp: string
+  orderId?: string
+  contract: HistoryContract
+  side: 'BUY' | 'SELL'
+  quantity: string
+  price: string
+  /** quantity × price × multiplier (string — Decimal-safe). */
+  value: string
+  /** 'reconcile' = balance drift folded in at observed price, not a real fill record. */
+  source: TradeHistorySource
+  commitHash: string
+}
+
 // ==================== Tool Call Log ====================
 
 export interface ToolCallRecord {
@@ -427,6 +529,10 @@ export interface UTAConfig {
   guards: GuardEntry[]
   /** User-filled form values for the preset's schema. */
   presetConfig: Record<string, unknown>
+  /** Whether broker-side account mutations are refused. */
+  readOnly: boolean
+  /** Whether this UTA participates in broker-backed market-data discovery. */
+  asVendor: boolean
 }
 
 // ==================== Broker Preset Metadata (from /broker-presets endpoint) ====================
@@ -495,6 +601,8 @@ export interface PlaceOrderRequest {
   ocaGroup?: string
   takeProfit?: { price: string }
   stopLoss?: { price: string; limitPrice?: string }
+  /** Target wallet on multi-wallet venues — required when the account spans >1. */
+  subAccountId?: string
   message: string
 }
 
@@ -502,6 +610,8 @@ export interface ClosePositionRequest {
   aliceId: string
   symbol?: string
   qty?: string
+  /** Target wallet on multi-wallet venues — required when the account spans >1. */
+  subAccountId?: string
   message: string
 }
 

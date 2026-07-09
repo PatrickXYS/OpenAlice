@@ -12,6 +12,8 @@ import type { ContractDescription } from '@traderalice/ibkr'
 export interface UTASummary {
   id: string
   label: string
+  /** Whether this UTA participates in broker-backed market-data discovery. */
+  asVendor: boolean
   capabilities: AccountCapabilities
   health: BrokerHealthInfo
 }
@@ -37,4 +39,20 @@ export interface AggregatedEquity {
 export interface ContractSearchResult {
   accountId: string
   results: ContractDescription[]
+}
+
+/**
+ * One flat contract-search hit as actually returned by
+ * `GET /api/trading/contracts/search` (aggregated across accounts).
+ * `contract.aliceId` is the operational identity downstream order / quote /
+ * bar APIs expect. (Distinct from the grouped `ContractSearchResult` above.)
+ */
+export interface ContractSearchHit {
+  /** UTA account id the contract lives on (e.g. "alpaca-paper"). */
+  source: string
+  contract: ContractDescription['contract']
+  derivativeSecTypes: string[]
+  /** Venue-decided asset class (the broker's `assetClassFor`) — authoritative
+   *  over a secType heuristic. Absent ⇒ consumer falls back to secType. */
+  assetClass?: 'equity' | 'crypto' | 'currency' | 'commodity' | 'unknown'
 }

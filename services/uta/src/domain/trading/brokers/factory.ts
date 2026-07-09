@@ -36,7 +36,9 @@ export function createBroker(config: UTAConfig, services?: BrokerServices): IBro
   const broker = entry.fromConfig({
     id: config.id,
     label: config.label,
-    brokerConfig: engineConfig,
+    // keyless flows through brokerConfig so engines that support public-data-only
+    // mode (CCXT) can skip credential validation; others ignore it.
+    brokerConfig: { ...engineConfig, keyless: config.keyless ?? false },
   })
 
   // Multi-currency-aware brokers (e.g. Longbridge) opt in via setFxService.

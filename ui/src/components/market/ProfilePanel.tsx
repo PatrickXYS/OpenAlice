@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { marketApi, type EquityProfile } from '../../api/market'
+import { Skeleton } from '../StateViews'
 import { Card } from './Card'
 import { fmtInt } from './format'
 
@@ -41,14 +42,21 @@ export function ProfilePanel({ symbol }: Props) {
 
   const info = [
     provider ? `Source: ${provider}` : 'Source: (unknown)',
-    'Endpoint: /api/market-data-v1/equity/profile',
+    'Endpoint: /api/market/equity/profile',
     'Company overview: sector, industry, leadership, location, headcount.',
     'Field coverage varies by provider; blank rows are fields the source doesn\u2019t report.',
   ].join('\n')
 
   return (
     <Card title="Profile" info={info}>
-      {loading && <div className="text-[12px] text-text-muted">Loading…</div>}
+      {loading && (
+        <div className="flex flex-col gap-3" aria-hidden="true">
+          <Skeleton className="h-3 w-40 rounded" />
+          <Skeleton className="h-3 w-52 rounded" />
+          <Skeleton className="h-3 w-32 rounded" />
+          <Skeleton className="h-3 w-44 rounded" />
+        </div>
+      )}
       {error && !loading && <div className="text-[12px] text-red">{error}</div>}
       {!loading && !error && profile && (
         <div className="flex flex-col gap-3 text-[12px]">

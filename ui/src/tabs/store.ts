@@ -9,6 +9,9 @@ import {
   specEquals,
   getFocusedGroup,
 } from './types'
+import { reloadOnHotUpdate } from '../lib/hmr'
+
+reloadOnHotUpdate('tabs/store')
 
 /**
  * Zustand store backing the workspace.
@@ -232,7 +235,20 @@ export const useWorkspace = create<WorkspaceStore>()(
     }),
     {
       name: 'openalice.workspace.v2',
-      version: 3,
+      // v4: the `chat` and `notifications-inbox` ViewSpec kinds (and the
+      // traditional-chat / notifications-legacy / connectors-legacy
+      // ActivitySections) were removed with the legacy chat cluster. A
+      // persisted tab or selectedSidebar of a removed kind would make
+      // TabStrip call getView() on a missing kind and crash on rehydrate;
+      // bumping the version drops stale persisted state (no migrate fn —
+      // schema bump clears, per this store's loud-fail contract).
+      // v5: the demo `/api/news` handler shape mismatch poisoned any
+      // session that had a news tab open — NewsPage's `[...articles]`
+      // throws when res.items is undefined, and the rehydrate replays
+      // that tab open on every reload. Bump clears the loop.
+      // v6: introduced the `chat-landing` ViewKind; clear stale persisted
+      // tab state so no rehydrate references an unknown kind.
+      version: 6,
       // Persist only the data shape — actions are recreated by the store factory.
       partialize: (state) => ({
         tabs: state.tabs,

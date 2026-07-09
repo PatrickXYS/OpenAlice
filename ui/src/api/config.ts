@@ -1,5 +1,5 @@
 import { headers } from './client'
-import type { AppConfig, Profile, Preset, Credential, SdkAdapterInfo } from './types'
+import type { AppConfig, Profile, Preset, Credential, SdkAdapterInfo, WireShape } from './types'
 
 export const configApi = {
   async load(): Promise<AppConfig> {
@@ -21,7 +21,7 @@ export const configApi = {
     return res.json()
   },
 
-  // ==================== Profile CRUD ====================
+  // ==================== Presets ====================
 
   async getPresets(): Promise<{ presets: Preset[] }> {
     const res = await fetch('/api/config/presets')
@@ -29,75 +29,98 @@ export const configApi = {
     return res.json()
   },
 
-  async getProfiles(): Promise<{
-    profiles: Record<string, Profile>
-    credentials: Record<string, Credential>
-    activeProfile: string
-  }> {
-    const res = await fetch('/api/config/profiles')
-    if (!res.ok) throw new Error('Failed to load profiles')
+  // ==================== Credential Vault ====================
+
+  async getCredentials(): Promise<{ credentials: CredentialSummary[] }> {
+    const res = await fetch('/api/config/credentials')
+    if (!res.ok) throw new Error('Failed to load credentials')
     return res.json()
   },
 
-  async getSdkAdapters(): Promise<{ adapters: SdkAdapterInfo[] }> {
-    const res = await fetch('/api/config/sdk-adapters')
-    if (!res.ok) throw new Error('Failed to load SDK adapters')
-    return res.json()
-  },
-
-  async createProfile(slug: string, profile: Profile): Promise<{ slug: string; profile: Profile }> {
-    const res = await fetch('/api/config/profiles', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ slug, profile }),
-    })
+  async addCredential(input: { vendor: string; label?: string; wires: Partial<Record<WireShape, string>>; apiKey: string; lastModel?: string }): Promise<{ slug: string; vendor: string }> {
+    const res = await fetch('/api/config/credentials', { method: 'POST', headers, body: JSON.stringify(input) })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to create profile' }))
-      throw new Error(err.error || 'Failed to create profile')
+      const err = await res.json().catch(() => ({ error: 'Failed to add credential' }))
+      throw new Error(err.error || 'Failed to add credential')
     }
     return res.json()
   },
 
-  async updateProfile(slug: string, profile: Profile): Promise<{ slug: string; profile: Profile }> {
-    const res = await fetch(`/api/config/profiles/${encodeURIComponent(slug)}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(profile),
+  async updateCredential(slug: string, input: { vendor: string; label?: string; wires: Partial<Record<WireShape, string>>; apiKey?: string; lastModel?: string }): Promise<void> {
+    const res = await fetch(`/api/config/credentials/${encodeURIComponent(slug)}`, { method: 'PUT', headers, body: JSON.stringify(input) })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to update credential' }))
+      throw new Error(err.error || 'Failed to update credential')
+    }
+  },
+
+  async deleteCredential(slug: string): Promise<void> {
+    const res = await fetch(`/api/config/credentials/${encodeURIComponent(slug)}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete credential' }))
+      throw new Error(err.error || 'Failed to delete credential')
+    }
+  },
+
+  async testCredential(input: {
+    wireShape: WireShape
+    baseUrl?: string
+    apiKey: string
+    model: string
+    authMode?: 'x-api-key' | 'bearer'
+  }): Promise<{ ok: boolean; response?: string; error?: string }> {
+    const res = await fetch('/api/config/credentials/test', { method: 'POST', headers, body: JSON.stringify(input) })
+    return res.json()
+  },
+
+  // ============ Default Workspace Credentials (per-agent) ============
+
+  async getWorkspaceCredentialDefaults(): Promise<WorkspaceCredentialDefaultsResponse> {
+    const res = await fetch('/api/config/workspace-credential-defaults')
+    if (!res.ok) throw new Error('Failed to load workspace credential defaults')
+    return res.json()
+  },
+
+  async setWorkspaceCredentialDefaults(
+    defaults: Record<string, WorkspaceCredentialDefault>,
+  ): Promise<{ defaults: Record<string, WorkspaceCredentialDefault> }> {
+    const res = await fetch('/api/config/workspace-credential-defaults', {
+      method: 'PUT', headers, body: JSON.stringify({ defaults }),
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to update profile' }))
-      throw new Error(err.error || 'Failed to update profile')
+      const err = await res.json().catch(() => ({ error: 'Failed to save defaults' }))
+      throw new Error(err.error || 'Failed to save defaults')
     }
     return res.json()
   },
 
-  async deleteProfile(slug: string): Promise<void> {
-    const res = await fetch(`/api/config/profiles/${encodeURIComponent(slug)}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to delete profile' }))
-      throw new Error(err.error || 'Failed to delete profile')
-    }
-  },
+}
 
-  async testProfile(profileData: Profile): Promise<{ ok: boolean; response?: string; error?: string }> {
-    const res = await fetch('/api/config/profiles/test', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(profileData),
-    })
-    return res.json()
-  },
+/** A per-agent default credential seeded into new workspaces. */
+export interface WorkspaceCredentialDefault {
+  credentialSlug: string
+  model?: string
+}
 
-  async setActiveProfile(slug: string): Promise<void> {
-    const res = await fetch('/api/config/active-profile', {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ slug }),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to set active profile' }))
-      throw new Error(err.error || 'Failed to set active profile')
-    }
-  },
+/** GET /workspace-credential-defaults — current defaults + per-agent picker options. */
+export interface WorkspaceCredentialDefaultsResponse {
+  /** agentId → default cred. Absent agent = no default seeded. */
+  defaults: Record<string, WorkspaceCredentialDefault>
+  /** agentId → vault slugs the agent can actually be driven by (wire funnel). */
+  compatibleByAgent: Record<string, string[]>
+}
 
+/** A central credential as the vault lists it. */
+export interface CredentialSummary {
+  slug: string
+  vendor: string
+  label?: string
+  authType: 'api-key' | 'subscription'
+  /** Wire capabilities: each shape this key speaks → its endpoint baseUrl. */
+  wires: Partial<Record<WireShape, string>>
+  /** The stored key (admin-gated; lets the edit form round-trip it). */
+  apiKey: string | null
+  hasApiKey: boolean
+  /** Last model successfully used with this key, reused by quick-chat injection. */
+  lastModel?: string
 }

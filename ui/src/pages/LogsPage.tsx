@@ -1,12 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, type EventLogEntry, type ToolCallRecord } from '../api'
+import { getIntlLocale } from '../lib/intl'
+import { Skeleton } from '../components/StateViews'
 
 // ==================== Helpers ====================
 
+/** First-load placeholder for a log list — a short stack of skeleton rows. */
+function LogRowsSkeleton() {
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="px-3 py-1.5 border-t border-border/50 first:border-t-0">
+          <Skeleton className="h-3.5 w-full rounded" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function formatDateTime(ts: number): string {
   const d = new Date(ts)
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const time = d.toLocaleTimeString('en-US', { hour12: false })
+  const date = d.toLocaleDateString(getIntlLocale(), { month: 'short', day: 'numeric' })
+  const time = d.toLocaleTimeString(getIntlLocale(), { hour12: false })
   return `${date} ${time}`
 }
 
@@ -150,7 +165,7 @@ function EventLogSection() {
         className="flex-1 min-h-0 bg-bg rounded-lg border border-border overflow-y-auto font-mono text-xs"
       >
         {loading && entries.length === 0 ? (
-          <div className="px-4 py-8 text-center text-text-muted">Loading...</div>
+          <LogRowsSkeleton />
         ) : entries.length === 0 ? (
           <div className="px-4 py-8 text-center text-text-muted">No events yet</div>
         ) : (
@@ -354,7 +369,7 @@ function ToolCallLogSection() {
         className="flex-1 min-h-0 bg-bg rounded-lg border border-border overflow-y-auto font-mono text-xs"
       >
         {loading && entries.length === 0 ? (
-          <div className="px-4 py-8 text-center text-text-muted">Loading...</div>
+          <LogRowsSkeleton />
         ) : entries.length === 0 ? (
           <div className="px-4 py-8 text-center text-text-muted">No tool calls yet</div>
         ) : (

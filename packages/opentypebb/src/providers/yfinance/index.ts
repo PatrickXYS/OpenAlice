@@ -15,6 +15,7 @@ import { YFinanceKeyMetricsFetcher } from './models/key-metrics.js'
 import { YFinancePriceTargetConsensusFetcher } from './models/price-target-consensus.js'
 import { YFinanceCryptoSearchFetcher } from './models/crypto-search.js'
 import { YFinanceCurrencySearchFetcher } from './models/currency-search.js'
+import { YFinanceEquitySearchFetcher } from './models/equity-search.js'
 import { YFinanceCryptoHistoricalFetcher } from './models/crypto-historical.js'
 import { YFinanceCurrencyHistoricalFetcher } from './models/currency-historical.js'
 import { YFinanceBalanceSheetFetcher } from './models/balance-sheet.js'
@@ -34,6 +35,10 @@ import { YFinanceIndexHistoricalFetcher } from './models/index-historical.js'
 import { YFinanceFuturesHistoricalFetcher } from './models/futures-historical.js'
 import { YFinanceAvailableIndicesFetcher } from './models/available-indices.js'
 import { YFinanceEtfInfoFetcher } from './models/etf-info.js'
+import { YFinanceEtfSearchFetcher } from './models/etf-search.js'
+import { YFEtfHoldingsFetcher } from './models/etf-holdings.js'
+import { YFEtfSectorsFetcher } from './models/etf-sectors.js'
+import { YFInsiderTradingFetcher } from './models/insider-trading.js'
 import { YFinanceEquityScreenerFetcher } from './models/equity-screener.js'
 import { YFinanceFuturesCurveFetcher } from './models/futures-curve.js'
 import { YFinanceOptionsChainsFetcher } from './models/options-chains.js'
@@ -46,6 +51,14 @@ export const yfinanceProvider = new Provider({
     'Yahoo! Finance is a web-based platform that offers financial news, ' +
     'data, and tools for investors and individuals interested in tracking ' +
     'and analyzing financial markets and assets.',
+  vendorMeta: {
+    coverage:
+      'Global default — US, plus CN (.SS/.SZ), HK (.HK), TW (.TW/.TWO), JP (.T), KR (.KS), EU and more.',
+    howToUse:
+      'Symbols are Yahoo tickers: bare for US (AAPL), suffixed elsewhere (600519.SS, 2330.TW, 7203.T). ' +
+      'Search takes English or pinyin (Kweichow Moutai → 600519.SS); it is weak on native-language names, ' +
+      'so for a Chinese/Japanese name either search English or enable the local vendor (eastmoney/twse).',
+  },
   fetcherDict: {
     EquityQuote: YFinanceEquityQuoteFetcher,
     EquityInfo: YFinanceEquityProfileFetcher,
@@ -57,6 +70,7 @@ export const yfinanceProvider = new Provider({
     BalanceSheet: YFinanceBalanceSheetFetcher,
     IncomeStatement: YFinanceIncomeStatementFetcher,
     CashFlowStatement: YFinanceCashFlowStatementFetcher,
+    EquitySearch: YFinanceEquitySearchFetcher,
     CryptoSearch: YFinanceCryptoSearchFetcher,
     CurrencyPairs: YFinanceCurrencySearchFetcher,
     CryptoHistorical: YFinanceCryptoHistoricalFetcher,
@@ -75,6 +89,12 @@ export const yfinanceProvider = new Provider({
     FuturesHistorical: YFinanceFuturesHistoricalFetcher,
     AvailableIndices: YFinanceAvailableIndicesFetcher,
     EtfInfo: YFinanceEtfInfoFetcher,
+    EtfSearch: YFinanceEtfSearchFetcher,
+    // Keyless fallbacks for FMP-only cells (top-10 holdings / full sector
+    // weights / Form-4 insider rows via quoteSummary).
+    EtfHoldings: YFEtfHoldingsFetcher,
+    EtfSectors: YFEtfSectorsFetcher,
+    InsiderTrading: YFInsiderTradingFetcher,
     EquityScreener: YFinanceEquityScreenerFetcher,
     FuturesCurve: YFinanceFuturesCurveFetcher,
     OptionsChains: YFinanceOptionsChainsFetcher,

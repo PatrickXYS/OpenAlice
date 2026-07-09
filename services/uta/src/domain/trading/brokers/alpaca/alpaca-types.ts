@@ -56,6 +56,15 @@ export interface AlpacaSnapshotRaw {
   DailyBar: { Volume: number }
 }
 
+export interface AlpacaBarRaw {
+  Timestamp: string
+  OpenPrice: number
+  HighPrice: number
+  LowPrice: number
+  ClosePrice: number
+  Volume: number
+}
+
 export interface AlpacaFillActivityRaw {
   activity_type: 'FILL'
   symbol: string

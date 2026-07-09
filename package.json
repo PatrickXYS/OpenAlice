@@ -1,23 +1,31 @@
 {
   "name": "open-alice",
-  "version": "0.21.0-beta.5",
+  "version": "0.73.0-beta",
   "description": "File-based trading agent engine",
   "type": "module",
   "main": "dist/electron/main.js",
   "scripts": {
     "dev": "tsx scripts/guardian/dev.ts",
+    "dev:onboarding": "tsx scripts/onboarding-test-dev.ts",
     "prebuild": "tsx scripts/build-migration-index.ts",
     "build": "turbo run build && tsup src/main.ts --format esm --dts",
     "build:migration-index": "tsx scripts/build-migration-index.ts",
     "start": "node dist/main.js",
-    "electron:tsc": "tsc -p electron/tsconfig.json",
+    "electron:tsc": "pnpm -F @traderalice/desktop build",
     "electron:build": "pnpm build && pnpm electron:tsc",
-    "electron:dev": "pnpm electron:build && electron dist/electron/main.js",
-    "electron:pack": "pnpm electron:build && electron-builder --dir",
+    "electron:dev": "pnpm electron:build && pnpm -F @traderalice/desktop dev",
+    "electron:pack": "pnpm electron:build && pnpm vendor:runtime && pnpm -F @traderalice/desktop pack",
+    "electron:assert-package": "node scripts/assert-desktop-package.mjs",
+    "electron:smoke-toolchain": "node scripts/smoke-packaged-toolchain.mjs",
+    "electron:smoke:packaged": "node scripts/desktop-packaged-smoke.mjs",
+    "electron:smoke:onboarding": "node scripts/desktop-packaged-smoke.mjs --onboarding",
+    "electron:smoke:pty": "node scripts/desktop-pty-smoke.mjs",
+    "vendor:runtime": "node scripts/vendor-managed-runtime.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:bbProvider": "vitest run --config vitest.bbProvider.config.ts",
+    "test:smoke": "tsx scripts/guardian/smoke.ts",
     "postinstall": "node scripts/fix-pty-perms.mjs"
   },
   "keywords": [
@@ -34,13 +42,9 @@
     "url": "git+https://github.com/TraderAlice/OpenAlice.git"
   },
   "homepage": "https://traderalice.com",
-  "packageManager": "pnpm@10.29.2",
+  "packageManager": "pnpm@11.7.0",
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.44",
-    "@ai-sdk/google": "^3.0.30",
-    "@ai-sdk/openai": "^3.0.30",
     "@alpacahq/alpaca-trade-api": "^3.1.3",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.72",
     "@anthropic-ai/sdk": "^0.96.0",
     "@grammyjs/auto-retry": "^2.0.2",
     "@hono/node-server": "^2.0.0",
@@ -53,14 +57,17 @@
     "ajv": "^8.18.0",
     "ccxt": "^4.5.38",
     "decimal.js": "^10.6.0",
+    "dugite": "3.2.2",
+    "electron-updater": "^6.8.9",
     "grammy": "^1.40.0",
-    "hono": "^4.12.14",
+    "hono": "^4.12.21",
     "longbridge": "^4.0.5",
     "node-pty": "^1.1.0",
     "openai": "^6.33.0",
     "pino": "^10.3.1",
     "viem": "^2.48.7",
     "ws": "^8.19.0",
+    "yaml": "^2.9.0",
     "zod": "^4.3.6"
   },
   "build": {
@@ -69,34 +76,53 @@
     "directories": {
       "output": "dist/electron-app"
     },
+    "electronVersion": "39.8.10",
+    "asar": false,
     "files": [
-      "dist/main.js",
+      "dist/*.js",
       "dist/electron/**",
       "ui/dist/**",
       "default/**",
-      "package.json"
+      "src/workspaces/cli/**",
+      "src/workspaces/templates/**",
+      "services/uta/dist/**",
+      "services/uta/package.json",
+      "vendor/**",
+      "package.json",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.d.ts.map",
+      "!node_modules/**/*.map",
+      "!node_modules/**/_types/**"
     ],
     "mac": {
-      "target": "dir"
-    }
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "node-pty",
-      "electron"
-    ],
-    "overrides": {
-      "@alpacahq/alpaca-trade-api>axios": "^0.31.1",
-      "@alpacahq/alpaca-trade-api>eslint": "-",
-      "lodash": "^4.18.0",
-      "path-to-regexp": "^8.4.0",
-      "follow-redirects": "^1.16.0",
-      "express-rate-limit": "^8.2.2",
-      "picomatch": "^4.0.4",
-      "rollup": "^4.59.0",
-      "vitest>vite": "^7.3.2",
-      "@vitest/mocker>vite": "^7.3.2"
-    }
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.finance",
+      "icon": "apps/desktop/build/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "apps/desktop/build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://download.openalice.ai/"
+      }
+    ]
   },
   "devDependencies": {
     "@ai-sdk/provider": "^3.0.8",
@@ -107,12 +133,10 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.5",
-    "electron": "^38.0.0",
-    "electron-builder": "^25.1.8",
     "jsdom": "^29.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "turbo": "^2.9.3",
+    "turbo": "^2.9.14",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5"
   }

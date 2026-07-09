@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createSimulatorRoutes } from './routes-simulator.js'
 import { MockBroker } from '../domain/trading/brokers/mock/MockBroker.js'
-import type { EngineContext } from '@/core/types.js'
+import type { UTAEngineContext } from '../types.js'
 
 interface FakeUTA {
   id: string
@@ -16,7 +16,7 @@ interface FakeUTA {
   broker: MockBroker
 }
 
-function makeCtx(brokers: Record<string, MockBroker | object>): EngineContext {
+function makeCtx(brokers: Record<string, MockBroker | object>): UTAEngineContext {
   const utas = new Map<string, FakeUTA>()
   for (const [id, b] of Object.entries(brokers)) {
     utas.set(id, { id, label: id, broker: b as MockBroker })
@@ -27,7 +27,7 @@ function makeCtx(brokers: Record<string, MockBroker | object>): EngineContext {
       resolve: () => [...utas.values()],
       listUTAs: () => [...utas.values()].map(u => ({ id: u.id, label: u.label })),
     },
-  } as unknown as EngineContext
+  } as unknown as UTAEngineContext
 }
 
 async function req(routes: ReturnType<typeof createSimulatorRoutes>, method: 'GET' | 'POST', path: string, body?: unknown) {

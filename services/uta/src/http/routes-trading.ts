@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import type { EngineContext } from '@/core/types.js'
+import type { UTAEngineContext } from '../types.js'
 import { BrokerError } from '../domain/trading/brokers/types.js'
 import type { UnifiedTradingAccount } from '../domain/trading/UnifiedTradingAccount.js'
 import { searchTradeableContracts } from '../domain/trading/contract-search.js'
 import type { AssetClassHint } from '@traderalice/uta-protocol'
 import { executeOneShotOrder, type OrderEntryPhase } from '../domain/trading/order-entry.js'
+import { projectOrderHistory, projectTradeHistory } from '../domain/trading/order-history.js'
 
 // ==================== Order entry schemas ====================
 //
@@ -36,6 +37,7 @@ const placeOrderSchema = z.object({
   ocaGroup: z.string().optional(),
   takeProfit: z.object({ price: numericString }).optional(),
   stopLoss: z.object({ price: numericString, limitPrice: numericString.optional() }).optional(),
+  subAccountId: z.string().optional(),
   message,
 }).refine(
   (d) => d.totalQuantity != null || d.cashQty != null,
@@ -46,6 +48,7 @@ const closePositionSchema = z.object({
   aliceId: z.string().min(1),
   symbol: z.string().optional(),
   qty: numericString.optional(),
+  subAccountId: z.string().optional(),
   message,
 })
 
@@ -78,7 +81,7 @@ const ALLOWED_ASSET_CLASSES: ReadonlySet<AssetClassHint> = new Set([
 ])
 
 /** Resolve account by :id param, return 404 if not found. */
-function resolveAccount(ctx: EngineContext, c: Context): UnifiedTradingAccount | null {
+function resolveAccount(ctx: UTAEngineContext, c: Context): UnifiedTradingAccount | null {
   const id = c.req.param('id')
   if (!id) return null
   return ctx.utaManager.get(id) ?? null
@@ -115,7 +118,7 @@ async function queryAccount<T>(
 }
 
 /** Unified trading routes — works with all account types via AccountManager */
-export function createTradingRoutes(ctx: EngineContext) {
+export function createTradingRoutes(ctx: UTAEngineContext) {
   const app = new Hono()
 
   // ==================== UTA listing ====================
@@ -149,7 +152,8 @@ export function createTradingRoutes(ctx: EngineContext) {
     // 'unknown' — identity passthrough — when omitted or invalid.
     const rawAc = c.req.query('assetClass') as AssetClassHint | undefined
     const assetClass: AssetClassHint = rawAc && ALLOWED_ASSET_CLASSES.has(rawAc) ? rawAc : 'unknown'
-    const hits = await searchTradeableContracts(ctx.utaManager, pattern, assetClass)
+    const source = c.req.query('source') ?? c.req.query('accountId')
+    const hits = await searchTradeableContracts(ctx.utaManager, pattern, assetClass, source)
     return c.json({ results: hits, count: hits.length, utasConfigured: utas.length })
   })
 
@@ -188,7 +192,7 @@ export function createTradingRoutes(ctx: EngineContext) {
     let broker: { init: () => Promise<void>; getAccount: () => Promise<unknown>; getPositions: () => Promise<unknown>; close: () => Promise<void> } | null = null
     try {
       const { createBroker } = await import('../domain/trading/brokers/factory.js')
-      const { utaConfigSchema } = await import('@traderalice/uta-protocol')
+      const { utaConfigSchema } = await import('@/core/config.js')
       const body = await c.req.json()
       const utaConfig = utaConfigSchema.parse({ ...body, id: body.id ?? '__test__' })
       broker = createBroker(utaConfig)
@@ -247,18 +251,26 @@ export function createTradingRoutes(ctx: EngineContext) {
     }
   })
 
-  // Account info
+  // Sub-accounts (wallets) — one element for ordinary brokers, >1 for
+  // separate-wallet venues (CCXT Binance: spot / derivatives).
+  app.get('/uta/:id/subaccounts', async (c) => {
+    const account = resolveAccount(ctx, c)
+    if (!account) return c.json({ error: 'Account not found' }, 404)
+    return queryAccount(c, account, async () => ({ subAccounts: await account.listSubAccounts() }))
+  })
+
+  // Account info. `?subAccountId=` scopes to one wallet (omitted ⇒ aggregate).
   app.get('/uta/:id/account', async (c) => {
     const account = resolveAccount(ctx, c)
     if (!account) return c.json({ error: 'Account not found' }, 404)
-    return queryAccount(c, account, () => account.getAccount())
+    return queryAccount(c, account, () => account.getAccount(c.req.query('subAccountId')))
   })
 
-  // Positions
+  // Positions. `?subAccountId=` scopes to one wallet (omitted ⇒ all).
   app.get('/uta/:id/positions', async (c) => {
     const account = resolveAccount(ctx, c)
     if (!account) return c.json({ error: 'Account not found' }, 404)
-    return queryAccount(c, account, async () => ({ positions: await account.getPositions() }))
+    return queryAccount(c, account, async () => ({ positions: await account.getPositions(c.req.query('subAccountId')) }))
   })
 
   // Orders
@@ -308,6 +320,39 @@ export function createTradingRoutes(ctx: EngineContext) {
     }
   })
 
+  // Hub → leaves expansion (bond issuers, option chains, futures months).
+  // Body: { aliceId, filters?: ExpandContractFilters }.
+  app.post('/uta/:id/contract/expand', async (c) => {
+    const account = resolveAccount(ctx, c)
+    if (!account) return c.json({ error: 'Account not found' }, 404)
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      return c.json(await account.expandContract(String(body.aliceId ?? ''), body.filters ?? {}))
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+    }
+  })
+
+  // Historical OHLCV bars. Body: { contract: <Contract|{aliceId}>, params: BarParams }.
+  // start/end arrive as ISO strings over the wire — revive to Date (the only
+  // Date fields in BarParams) before the broker call.
+  app.post('/uta/:id/historical', async (c) => {
+    const account = resolveAccount(ctx, c)
+    if (!account) return c.json({ error: 'Account not found' }, 404)
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const { Contract } = await import('@traderalice/ibkr')
+      const contract = Object.assign(new Contract(), body.contract ?? body)
+      const params = { ...(body.params ?? {}) }
+      if (params.start) params.start = new Date(params.start)
+      if (params.end) params.end = new Date(params.end)
+      const bars = await account.getHistorical(contract, params)
+      return c.json({ bars })
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+    }
+  })
+
   // Contract details — drilldown after a search hit. Body shape is a
   // `Contract` subset; when `aliceId` is present, `getContractDetails`
   // expands it internally via the broker's native-key decoder.
@@ -333,6 +378,24 @@ export function createTradingRoutes(ctx: EngineContext) {
     const limit = Number(c.req.query('limit')) || 20
     const symbol = c.req.query('symbol') || undefined
     return c.json({ commits: uta.log({ limit, symbol }) })
+  })
+
+  // Exchange-frontend projections of the git log — Order History (one row
+  // per order, lifecycle collapsed) and Trade History (fills only).
+  // Projection logic lives in domain/trading/order-history.ts so MCP/CLI
+  // surfaces can reuse it.
+  app.get('/uta/:id/order-history', (c) => {
+    const uta = ctx.utaManager.get(c.req.param('id'))
+    if (!uta) return c.json({ error: 'Account not found' }, 404)
+    const limit = Number(c.req.query('limit')) || 50
+    return c.json({ orders: projectOrderHistory(uta.exportGitState().commits, { limit }) })
+  })
+
+  app.get('/uta/:id/trade-history', (c) => {
+    const uta = ctx.utaManager.get(c.req.param('id'))
+    if (!uta) return c.json({ error: 'Account not found' }, 404)
+    const limit = Number(c.req.query('limit')) || 50
+    return c.json({ trades: projectTradeHistory(uta.exportGitState().commits, { limit }) })
   })
 
   app.get('/uta/:id/wallet/show/:hash', (c) => {
