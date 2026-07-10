@@ -21,24 +21,50 @@ import type { ReadFileResult } from './workspace/api'
 export function FileContentView({
   path,
   result,
+  variant = 'default',
 }: {
   path: string
   result: ReadFileResult
+  /** `article` — looser typography + scrollable tables for Inbox reports. */
+  variant?: 'default' | 'article'
 }): ReactElement {
-  if (result.kind === 'ok') return <DocBody path={path} content={result.content} />
+  if (result.kind === 'ok') return <DocBody path={path} content={result.content} variant={variant} />
   return <DocTombstone result={result} />
 }
 
-function DocBody({ path, content }: { path: string; content: string }): ReactElement {
+function DocBody({
+  path,
+  content,
+  variant,
+}: {
+  path: string
+  content: string
+  variant: 'default' | 'article'
+}): ReactElement {
   const lower = path.toLowerCase()
+  const article = variant === 'article'
   if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
-    return <MarkdownContent text={content} />
+    return (
+      <div className={article ? 'overflow-x-auto' : undefined}>
+        <MarkdownContent
+          text={content}
+          className={article ? 'markdown-article leading-relaxed text-text' : undefined}
+        />
+      </div>
+    )
   }
   if (lower.endsWith('.html') || lower.endsWith('.htm')) {
     // DOMPurify sanitisation is inside MarkdownContent; for raw HTML we
     // run it through the markdown renderer too — marked passes HTML
     // through, then DOMPurify sanitises before insertion.
-    return <MarkdownContent text={content} />
+    return (
+      <div className={article ? 'overflow-x-auto' : undefined}>
+        <MarkdownContent
+          text={content}
+          className={article ? 'markdown-article leading-relaxed text-text' : undefined}
+        />
+      </div>
+    )
   }
   // Plain-text fallback (.txt, .log, no extension, code files…)
   return (

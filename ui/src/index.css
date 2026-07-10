@@ -601,6 +601,38 @@ html[lang="ja"] .oa-onboarding-title {
   margin-top: 0;
 }
 
+/* Inbox report reader — slightly larger body, roomier tables. */
+.markdown-article .markdown-content {
+  font-size: 15px;
+  line-height: 1.65;
+  overflow-x: auto;
+}
+.markdown-article .markdown-content table {
+  width: max-content;
+  min-width: 100%;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.markdown-article .markdown-content th,
+.markdown-article .markdown-content td {
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+.markdown-article .markdown-content h1 {
+  font-size: 1.35em;
+  margin: 0 0 0.6em;
+}
+.markdown-article .markdown-content h2 {
+  font-size: 1.15em;
+  margin-top: 1.25em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+.markdown-article .markdown-content p,
+.markdown-article .markdown-content li {
+  line-height: 1.65;
+}
+
 /* Thinking animation */
 @keyframes blink {
   0%,

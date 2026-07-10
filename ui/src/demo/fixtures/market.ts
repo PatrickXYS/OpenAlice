@@ -12,6 +12,7 @@ import aaplRatios from './market/aapl-equity-fundamental-ratios.json'
 import aaplBalance from './market/aapl-equity-fundamental-balance.json'
 import aaplIncome from './market/aapl-equity-fundamental-income.json'
 import aaplCash from './market/aapl-equity-fundamental-cash.json'
+import aaplInsiders from './market/aapl-equity-insiders.json'
 import aaplSearch from './market/aapl-search.json'
 import sectorRotation from './market/sector-rotation-demo.json'
 
@@ -26,6 +27,7 @@ export const demoMarketAAPL = {
   balance: aaplBalance,
   income: aaplIncome,
   cash: aaplCash,
+  insiders: aaplInsiders,
 } as const
 
 export const demoMarketSearchAAPL = aaplSearch
