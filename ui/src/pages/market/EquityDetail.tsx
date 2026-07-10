@@ -2,6 +2,7 @@ import { QuoteHeader } from '../../components/market/QuoteHeader'
 import { ProfilePanel } from '../../components/market/ProfilePanel'
 import { KeyMetricsPanel } from '../../components/market/KeyMetricsPanel'
 import { FinancialStatementsPanel } from '../../components/market/FinancialStatementsPanel'
+import { InsiderTradingPanel } from '../../components/market/InsiderTradingPanel'
 import { KlinePanel } from '../../components/market/KlinePanel'
 import { TradeableContractsPanel } from '../../components/market/TradeableContractsPanel'
 
@@ -22,6 +23,8 @@ export function EquityDetail({ symbol }: Props) {
         <ProfilePanel symbol={symbol} />
         <KeyMetricsPanel symbol={symbol} />
       </div>
+
+      <InsiderTradingPanel symbol={symbol} />
 
       <TradeableContractsPanel symbol={symbol} assetClass="equity" />
 

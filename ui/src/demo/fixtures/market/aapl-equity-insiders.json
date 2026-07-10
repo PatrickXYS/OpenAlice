@@ -1,0 +1,56 @@
+{
+  "results": [
+    {
+      "symbol": "AAPL",
+      "company_cik": null,
+      "filing_date": null,
+      "transaction_date": "2026-07-02",
+      "owner_cik": null,
+      "owner_name": "COOK TIMOTHY D",
+      "owner_title": "Chief Executive Officer",
+      "ownership_type": "D",
+      "transaction_type": "Sale at price 214.50 per share.",
+      "acquisition_or_disposition": null,
+      "security_type": null,
+      "securities_owned": null,
+      "securities_transacted": 50000,
+      "transaction_price": 214.5,
+      "filing_url": null
+    },
+    {
+      "symbol": "AAPL",
+      "company_cik": null,
+      "filing_date": null,
+      "transaction_date": "2026-06-28",
+      "owner_cik": null,
+      "owner_name": "MAESTRI LUCA",
+      "owner_title": "Senior Vice President, CFO",
+      "ownership_type": "D",
+      "transaction_type": "Purchase at price 208.10 per share.",
+      "acquisition_or_disposition": null,
+      "security_type": null,
+      "securities_owned": null,
+      "securities_transacted": 2500,
+      "transaction_price": 208.1,
+      "filing_url": null
+    },
+    {
+      "symbol": "AAPL",
+      "company_cik": null,
+      "filing_date": null,
+      "transaction_date": "2026-06-25",
+      "owner_cik": null,
+      "owner_name": "LEVINSON ARTHUR D",
+      "owner_title": "Director",
+      "ownership_type": "D",
+      "transaction_type": "Stock Award(Grant) at price 0.00 per share.",
+      "acquisition_or_disposition": null,
+      "security_type": null,
+      "securities_owned": null,
+      "securities_transacted": 1211,
+      "transaction_price": null,
+      "filing_url": null
+    }
+  ],
+  "provider": "demo"
+}

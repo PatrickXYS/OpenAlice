@@ -12,6 +12,7 @@ import { AutomationPage } from '../pages/AutomationPage'
 import { NewsPage } from '../pages/NewsPage'
 import { MarketPage } from '../pages/MarketPage'
 import { MarketRotationPage } from '../pages/MarketRotationPage'
+import { MarketInsidersPage } from '../pages/MarketInsidersPage'
 import { MarketBoardPage } from '../pages/MarketBoardPage'
 import { MARKET_BOARD_TITLES } from '../pages/market-board-titles'
 import { MarketDetailPage } from '../pages/MarketDetailPage'
@@ -205,6 +206,22 @@ const marketRotationModule: ViewModule<'market-rotation'> = {
       sidebar={<MarketSidebar />}
     >
       <MarketRotationPage />
+    </PageSidebarShell>
+  ),
+}
+
+const marketInsidersModule: ViewModule<'market-insiders'> = {
+  kind: 'market-insiders',
+  title: () => 'Insider Tape',
+  toUrl: () => '/market/insiders',
+  Component: () => (
+    <PageSidebarShell
+      storageKey="market"
+      titleKey="nav.item.market"
+      defaultWidth={300}
+      sidebar={<MarketSidebar />}
+    >
+      <MarketInsidersPage />
     </PageSidebarShell>
   ),
 }
@@ -501,6 +518,7 @@ const VIEWS = {
   news: newsModule,
   'market-list': marketListModule,
   'market-rotation': marketRotationModule,
+  'market-insiders': marketInsidersModule,
   'market-board': marketBoardModule,
   'market-detail': marketDetailModule,
   settings: settingsModule,
