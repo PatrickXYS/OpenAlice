@@ -86,6 +86,47 @@ export const marketHandlers = [
   http.get('/api/market/equity/balance', aaplOnly(demoMarketAAPL.balance)),
   http.get('/api/market/equity/income', aaplOnly(demoMarketAAPL.income)),
   http.get('/api/market/equity/cash', aaplOnly(demoMarketAAPL.cash)),
+  http.get('/api/market/equity/insiders', aaplOnly(demoMarketAAPL.insiders)),
+
+  // Fixed-universe Form 4 tape — daily-cache shape (demo is always "fresh").
+  http.get('/api/market/insiders-tape', () => {
+    const symbols = [
+      'ADI', 'ALAB', 'AMAT', 'AMD', 'ARM', 'ASML', 'ASX', 'AVGO', 'CRDO', 'ENTG',
+      'INTC', 'KLAC', 'LRCX', 'MCHP', 'MPWR', 'MRVL', 'MTSI', 'MU', 'NVMI', 'NVDA',
+      'NXPI', 'ON', 'QCOM', 'RMBS', 'SNDK', 'STM', 'STX', 'SWKS', 'TER', 'TSM',
+      'TXN', 'UMC', 'WDC',
+    ]
+    const demoTickers = ['NVDA', 'AMD', 'MU', 'INTC', 'AVGO']
+    const template = demoMarketAAPL.insiders.results ?? []
+    const trades = demoTickers.flatMap((symbol, si) =>
+      template.slice(0, 2).map((row, ri) => ({
+        ...row,
+        symbol,
+        owner_name: row.owner_name ?? `Demo Insider ${si + 1}`,
+        securities_transacted: (row.securities_transacted ?? 1000) * (ri + 1) * (si + 1),
+        transaction_price: row.transaction_price ?? 100 + si * 10,
+      })),
+    )
+    const asOf = new Date().toISOString()
+    const dateKey = asOf.slice(0, 10)
+    return HttpResponse.json({
+      dateKey,
+      asOf,
+      cachedAt: asOf,
+      universeId: 'soxx-dram',
+      universe: 'SOXX + DRAM',
+      symbols,
+      trades,
+      errors: [],
+      meta: {
+        origin: 'local',
+        provider: 'demo',
+        asOf,
+        cachedAt: asOf,
+        limitPerSymbol: 12,
+      },
+    })
+  }),
 
   http.post('/api/market-data/test-provider', () => HttpResponse.json({ ok: true })),
   http.get('/api/market-data/hub-status', () =>

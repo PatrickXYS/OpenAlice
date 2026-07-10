@@ -10,10 +10,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { basename, delimiter as pathDelimiter, join } from 'node:path';
+import { mkdir, rm } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 
 import { cliBinPath } from '@/core/paths.js';
-import { readIssueDefaultAgent, readWorkspaceDefaultAgent } from '@/core/config.js';
+import { readCredentials, readIssueDefaultAgent, readWorkspaceDefaultAgent } from '@/core/config.js';
 
 import { claudeAdapter } from './adapters/claude.js';
 import { codexAdapter } from './adapters/codex.js';
@@ -27,6 +28,21 @@ import { logger as launcherLogger } from './logger.js';
 import { acquireWorkspaceProcessLock } from './process-lock.js';
 import { runHeadlessProbe, type HeadlessProbeResult } from './probe.js';
 import { runHeadlessTask, type HeadlessTaskResult } from './headless-task.js';
+import {
+  checkingRuntimeReadinessRow,
+  failedRuntimeReadinessRow,
+  initialRuntimeReadinessRow,
+  notInstalledRuntimeReadinessRow,
+  readyRuntimeReadinessRow,
+  runtimeProbeSucceeded,
+  snapshotRuntimeReadiness,
+  RUNTIME_READINESS_PROMPT,
+  RUNTIME_READINESS_TIMEOUT_MS,
+  type AgentRuntimeReadinessRow,
+  type AgentRuntimeReadinessSnapshot,
+  type AgentRuntimeReadinessSource,
+} from './agent-runtime-readiness.js';
+import { verifyIssueArtifacts } from './issues/require-artifacts.js';
 import { ScheduleMarkerStore } from './schedule/marker-store.js';
 import { ScheduleScanner, DEFAULT_INTERVAL_MS } from './schedule/scanner.js';
 import {
@@ -50,7 +66,13 @@ import {
 } from './issues/board.js';
 import { completeOneShotIssueAfterRun } from './issues/auto-complete.js';
 import type { IInboxStore } from '@/core/inbox-store.js';
-import { HeadlessTaskRegistry, headlessLogPaths } from './headless-task-registry.js';
+import { HeadlessTaskRegistry, headlessLogPaths, type HeadlessTaskStatus } from './headless-task-registry.js';
+import {
+  compatibleCredentials,
+  credentialToWorkspaceAiCred,
+  resolveInjectionModel,
+} from './credential-injection.js';
+import { injectWorkspaceContext } from './context-injector.js';
 
 /** Max concurrent in-flight headless tasks — backstop against unbounded spawn. */
 const MAX_CONCURRENT_HEADLESS = 8;
@@ -70,7 +92,7 @@ import { terminalThemeEnv } from './terminal-theme.js';
 import { readReadmeVersion, TemplateRegistry } from './template-registry.js';
 import { readWorkspaceMetadata } from './workspace-metadata.js';
 import { TranscriptWatcher } from './transcript-watcher.js';
-import { detectBinary, type AgentAvailability } from './agent-detect.js';
+import { detectAgentBinary, runtimeInstallOverride, type AgentAvailability } from './agent-detect.js';
 import { resolveLaunchCommand } from './win-command.js';
 import { WorkspaceCreator } from './workspace-creator.js';
 import { WorkspaceRegistry, type WorkspaceMeta } from './workspace-registry.js';
@@ -150,6 +172,13 @@ export interface WorkspaceService {
     prompt: string,
     timeoutMs: number,
   ): Promise<HeadlessTaskResult>;
+  /** Cached install/ready snapshot for global first-run runtime gating. */
+  getAgentRuntimeReadiness(): AgentRuntimeReadinessSnapshot;
+  /**
+   * Run real headless readiness probes for one or all agent runtimes. Uses
+   * launcher-owned scratch dirs, never registered workspaces or user projects.
+   */
+  probeAgentRuntimeReadiness(agentId?: string): Promise<AgentRuntimeReadinessSnapshot>;
   /**
    * ASYNC dispatch — records the task, spawns it in the background, returns the
    * taskId immediately (the automation path). Throws `HeadlessCapacityError`
@@ -282,6 +311,7 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
   adapters.register(opencodeAdapter);
   adapters.register(piAdapter);
   adapters.register(shellAdapter);
+  const runtimeReadinessCache = new Map<string, AgentRuntimeReadinessRow>();
 
   const creator = new WorkspaceCreator({
     workspacesRoot: `${config.launcherRoot}/workspaces`,
@@ -383,7 +413,7 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
       // from its shell (it reads OPENALICE_TOOL_URL + AQ_WS_ID above). Shared
       // script — not written into the workspace, so it never pollutes the
       // workspace's git repo.
-      PATH: `${cliBinPath()}${pathDelimiter}${process.env.PATH ?? ''}`,
+      OPENALICE_WORKSPACE_CLI_BIN_PATH: cliBinPath(),
       // Per-workspace git identity — so any commit the agent makes (in its own
       // repo OR a peer's, during cross-workspace collaboration) self-attributes
       // to this workspace, and never fails for a missing identity on a clean
@@ -440,6 +470,207 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
     }
     const transcriptDir = adapter.transcriptDir ? adapter.transcriptDir(ws.dir) : null;
     return { command, cwd: ws.dir, env, transcriptDir };
+  };
+
+  const getRuntimeAdapters = () => adapters.list().filter(isAgentRuntime);
+
+  const getAgentRuntimeReadinessMethod = (): AgentRuntimeReadinessSnapshot =>
+    snapshotRuntimeReadiness(getRuntimeAdapters(), detectAgents(), runtimeReadinessCache);
+
+  const runtimeReadinessSourceFor = (
+    adapter: CliAdapter,
+    availability?: AgentAvailability,
+  ): AgentRuntimeReadinessSource => {
+    if (adapter.id === 'claude' || adapter.id === 'codex') return 'global-login';
+    const binaryPath = availability?.path ?? '';
+    if (
+      adapter.id === 'pi' &&
+      (binaryPath.includes('/vendor/pi/') || binaryPath.includes('\\vendor\\pi\\'))
+    ) {
+      return 'managed-runtime';
+    }
+    return 'global-config';
+  };
+
+  const prepareRuntimeReadinessWorkspace = async (adapter: CliAdapter): Promise<WorkspaceMeta> => {
+    const id = `__runtime_readiness_${adapter.id}`;
+    const dir = join(config.launcherRoot, 'state', 'runtime-readiness', adapter.id);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+
+    const template = templates.get('chat');
+    if (template) {
+      await injectWorkspaceContext({ template, wsId: id, dir });
+    }
+    if (adapter.bootstrap) {
+      await adapter.bootstrap({ wsId: id, cwd: dir, launcherRepoRoot: config.launcherRepoRoot });
+    }
+
+    return {
+      id,
+      tag: id,
+      dir,
+      createdAt: new Date().toISOString(),
+      template: 'chat',
+      agents: [adapter.id],
+    };
+  };
+
+  const writeFirstCompatibleRuntimeCredential = async (
+    adapter: CliAdapter,
+    dir: string,
+  ): Promise<boolean> => {
+    if (!adapter.writeAiConfig) return false;
+    const credentials = await readCredentials();
+    const [, credential] = compatibleCredentials(credentials, adapter.id)[0] ?? [];
+    if (!credential) return false;
+
+    const model = resolveInjectionModel(credential);
+    const workspaceCredential = credentialToWorkspaceAiCred(
+      credential,
+      adapter.id,
+      model ? { model } : {},
+    );
+    if (!workspaceCredential) return false;
+    await adapter.writeAiConfig(dir, workspaceCredential);
+    return true;
+  };
+
+  const runRuntimeReadinessProbeAttempt = async (
+    adapter: CliAdapter,
+    source: AgentRuntimeReadinessSource,
+    options: { injectCredential?: boolean } = {},
+  ) => {
+    const ws = await prepareRuntimeReadinessWorkspace(adapter);
+    try {
+      if (options.injectCredential) {
+        const wroteCredential = await writeFirstCompatibleRuntimeCredential(adapter, ws.dir);
+        if (!wroteCredential) return null;
+      }
+      const { cwd, env } = composeSpawnInputs(ws, adapter, undefined);
+      const command = adapter.composeHeadlessCommand?.(
+        config.command,
+        { cwd, env },
+        RUNTIME_READINESS_PROMPT,
+      );
+      if (!command) return null;
+      const result = await runHeadlessTask({
+        command,
+        cwd,
+        env,
+        timeoutMs: RUNTIME_READINESS_TIMEOUT_MS,
+        logger: launcherLogger.child({ scope: 'runtime-readiness', agent: adapter.id }),
+        allowShellShim: true,
+        ...(adapter.extractHeadlessSessionId
+          ? { extractSessionId: adapter.extractHeadlessSessionId.bind(adapter) }
+          : {}),
+      });
+      return { result, source };
+    } finally {
+      await rm(ws.dir, { recursive: true, force: true }).catch(() => {});
+    }
+  };
+
+  const syntheticRuntimeReadinessFailure = (message: string): HeadlessTaskResult => ({
+    command: [],
+    cwd: config.launcherRoot,
+    exitCode: -1,
+    signal: null,
+    killed: false,
+    durationMs: 0,
+    stdoutTail: '',
+    stderrTail: message,
+    agentSessionId: null,
+  });
+
+  const probeSingleAgentRuntimeReadiness = async (
+    adapter: CliAdapter,
+    availability?: AgentAvailability,
+  ): Promise<AgentRuntimeReadinessRow> => {
+    if (!availability?.installed) {
+      const row = notInstalledRuntimeReadinessRow(adapter, availability);
+      runtimeReadinessCache.set(adapter.id, row);
+      return row;
+    }
+    if (!adapter.capabilities.headless || !adapter.composeHeadlessCommand) {
+      const row = failedRuntimeReadinessRow({
+        adapter,
+        availability,
+        result: syntheticRuntimeReadinessFailure('Agent does not support headless probes.'),
+      });
+      runtimeReadinessCache.set(adapter.id, row);
+      return row;
+    }
+
+    const existing =
+      runtimeReadinessCache.get(adapter.id) ?? initialRuntimeReadinessRow(adapter, availability);
+    runtimeReadinessCache.set(adapter.id, checkingRuntimeReadinessRow(existing));
+
+    const globalSource = runtimeReadinessSourceFor(adapter, availability);
+    let lastAttempt: Awaited<ReturnType<typeof runRuntimeReadinessProbeAttempt>> | null = null;
+
+    try {
+      lastAttempt = await runRuntimeReadinessProbeAttempt(adapter, globalSource);
+      if (lastAttempt && runtimeProbeSucceeded(lastAttempt.result)) {
+        const row = readyRuntimeReadinessRow({
+          adapter,
+          availability,
+          source: lastAttempt.source,
+          durationMs: lastAttempt.result.durationMs,
+        });
+        runtimeReadinessCache.set(adapter.id, row);
+        return row;
+      }
+
+      const launcherAttempt = await runRuntimeReadinessProbeAttempt(adapter, 'launcher-vault', {
+        injectCredential: true,
+      });
+      if (launcherAttempt) lastAttempt = launcherAttempt;
+      if (launcherAttempt && runtimeProbeSucceeded(launcherAttempt.result)) {
+        const row = readyRuntimeReadinessRow({
+          adapter,
+          availability,
+          source: 'launcher-vault',
+          durationMs: launcherAttempt.result.durationMs,
+        });
+        runtimeReadinessCache.set(adapter.id, row);
+        return row;
+      }
+
+      const row = failedRuntimeReadinessRow({
+        adapter,
+        availability,
+        result:
+          lastAttempt?.result ??
+          syntheticRuntimeReadinessFailure('No compatible credential or runtime config was found.'),
+        source: lastAttempt?.source ?? globalSource,
+      });
+      runtimeReadinessCache.set(adapter.id, row);
+      return row;
+    } catch (err) {
+      const row = failedRuntimeReadinessRow({
+        adapter,
+        availability,
+        result: syntheticRuntimeReadinessFailure(err instanceof Error ? err.message : String(err)),
+        source: lastAttempt?.source ?? globalSource,
+      });
+      runtimeReadinessCache.set(adapter.id, row);
+      return row;
+    }
+  };
+
+  const probeAgentRuntimeReadinessMethod = async (
+    agentId?: string,
+  ): Promise<AgentRuntimeReadinessSnapshot> => {
+    const runtimeAdapters = getRuntimeAdapters();
+    const targets = agentId
+      ? runtimeAdapters.filter((adapter) => adapter.id === agentId)
+      : runtimeAdapters;
+    const availability = detectAgents();
+    await Promise.all(
+      targets.map((adapter) => probeSingleAgentRuntimeReadiness(adapter, availability[adapter.id])),
+    );
+    return snapshotRuntimeReadiness(runtimeAdapters, detectAgents(), runtimeReadinessCache);
   };
 
   const computeSpawnPlan = (
@@ -568,10 +799,10 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
       startedAt: Date.now(),
       ...(issueId ? { issueId } : {}),
     });
-    // Fire-and-forget: run to natural exit, then fill the record. NOTE: status
-    // is judged by exit code — pi can exit 0 on an in-band model error, so
-    // "done" means "process exited cleanly", not "the agent succeeded"; the
-    // operator confirms via the Inbox / the task's tail.
+    // Fire-and-forget: run to natural exit, then fill the record. Exit code is
+    // the baseline (pi/claude can exit 0 on in-band failure); when the firing
+    // issue declares `requireArtifacts`, we additionally require fresh matching
+    // files or mark the task failed.
     void runHeadlessTaskMethod(ws, adapter, prompt, timeoutMs, {
       taskId: rec.taskId,
       onSessionId: (id) =>
@@ -582,7 +813,27 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
           ),
     })
       .then(async (r) => {
-        const status = r.killed ? 'failed' : r.exitCode === 0 ? 'done' : 'failed';
+        let status: HeadlessTaskStatus = r.killed ? 'failed' : r.exitCode === 0 ? 'done' : 'failed';
+        let error: string | undefined;
+        // Exit 0 ≠ success when the issue declares requireArtifacts — catch the
+        // "agent politely reported failure then exited cleanly" false positive.
+        if (status === 'done' && issueId) {
+          const gate = await verifyIssueArtifacts({
+            wsDir: ws.dir,
+            issueId,
+            sinceMs: rec.startedAt,
+          });
+          if (!gate.ok) {
+            status = 'failed';
+            error = gate.error;
+            launcherLogger.warn('headless.artifact_gate_failed', {
+              wsId: ws.id,
+              issueId,
+              taskId: rec.taskId,
+              missing: gate.missing,
+            });
+          }
+        }
         await headlessTasks.complete(rec.taskId, {
           status,
           finishedAt: Date.now(),
@@ -590,6 +841,7 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
           exitCode: r.exitCode,
           signal: r.signal,
           killed: r.killed,
+          ...(error ? { error } : {}),
         });
         // Scheduled one-shot issues are the only board items whose lifecycle can
         // be closed mechanically from a run exit. Repeating schedules keep their
@@ -910,8 +1162,13 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
     const out: Record<string, AgentAvailability> = {};
     const env = { ...process.env, PATH: buildCliPath(process.env) };
     for (const a of adapters.list()) {
+      const override = isAgentRuntime(a) ? runtimeInstallOverride(a.id, env) : null;
+      if (override) {
+        out[a.id] = override;
+        continue;
+      }
       // No declared binary (shell → `$SHELL`) is always available.
-      out[a.id] = a.binary ? detectBinary(a.binary, { env }) : { installed: true, path: null };
+      out[a.id] = a.binary ? detectAgentBinary(a.id, a.binary, { env }) : { installed: true, path: null };
     }
     return out;
   };
@@ -1008,6 +1265,8 @@ export async function createWorkspaceService(opts: CreateWorkspaceServiceOptions
     resolveAdapter,
     publicMeta,
     detectAgents,
+    getAgentRuntimeReadiness: getAgentRuntimeReadinessMethod,
+    probeAgentRuntimeReadiness: probeAgentRuntimeReadinessMethod,
     computeSpawnPlan,
     runHeadlessProbe: runHeadlessProbeMethod,
     runHeadlessTask: runHeadlessTaskMethod,

@@ -28,9 +28,9 @@ interface InboxPageProps {
  * own entry, because a workspace's pushes are usually unrelated topics
  * (we have no Issue layer to make them one thread) — merging them into a
  * combined timeline read badly. So selection is a single entry, and this
- * pane shows just that one: its docs (collapsed attachment cards) above
- * its comment (markdown body), with a reply bar that jumps into the
- * source workspace.
+ * pane shows just that one: short comment as lead, then docs (markdown
+ * reports expand inline as articles — no extra click to open the file),
+ * with a reply bar that jumps into the source workspace.
  *
  * Selection (an entryId) is owned by `useInboxSelection`; the sidebar
  * drives it and marks the entry read on select. Delete (header trash +
@@ -270,32 +270,37 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         </button>
       </div>
 
-      {/* Docs — collapsed attachment cards above the comment. */}
+      {/* Lead — agent's short comment / alert summary. */}
+      {hasComments && (
+        <div className="mb-6">
+          <MarkdownContent
+            text={entry.comments!}
+            strikethrough={false}
+            codeSpanWikilinks
+            className="text-[15px] leading-relaxed text-text"
+          />
+        </div>
+      )}
+
+      {/* Docs — markdown reports render as articles (expanded); other
+       *  files stay collapsible attachments. */}
       {hasDocs && (
-        <div>
-          <div className="text-[11px] font-medium text-text-muted/60 uppercase tracking-wider mb-3">
-            {t('inbox.documentsSection')}
-          </div>
-          <div className="space-y-3">
+        <div className={hasComments ? 'pt-2 border-t border-border/60' : ''}>
+          {!hasComments && (
+            <div className="text-[11px] font-medium text-text-muted/60 uppercase tracking-wider mb-3">
+              {t('inbox.documentsSection')}
+            </div>
+          )}
+          <div className="space-y-5">
             {entry.docs!.map((doc) => (
               <DocBlock
                 key={doc.path}
                 workspaceId={entry.workspaceId}
                 doc={doc}
-                defaultExpanded={!hasComments}
+                defaultExpanded={isMarkdownPath(doc.path)}
               />
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Comment — the agent's voice; divider from the docs above. */}
-      {hasComments && (
-        <div className={`${hasDocs ? 'mt-6 pt-6 border-t border-border' : ''}`}>
-          <MarkdownContent
-            text={entry.comments!}
-            className="leading-relaxed text-text/90"
-          />
         </div>
       )}
 
@@ -338,13 +343,12 @@ function DocBlock({
   defaultExpanded: boolean
 }) {
   const { t } = useTranslation()
+  const isMd = isMarkdownPath(doc.path)
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [result, setResult] = useState<ReadFileResult | null>(null)
   const [copied, setCopied] = useState(false)
 
-  // Fetch on mount: the collapsed card shows a text preview, so we need the
-  // content up front. The same `result` then renders in full on expand —
-  // one fetch serves both states.
+  // Fetch on mount so collapsed previews and article titles are ready.
   useEffect(() => {
     let cancelled = false
     setResult(null)
@@ -355,7 +359,12 @@ function DocBlock({
   }, [workspaceId, doc.path])
 
   const preview = useMemo(() => buildDocPreview(result), [result])
-  const markdownActionsAvailable = isMarkdownPath(doc.path) && result?.kind === 'ok'
+  const articleTitle = useMemo(() => {
+    if (!isMd || result?.kind !== 'ok') return null
+    return extractMarkdownTitle(result.content)
+  }, [isMd, result])
+  const displayName = articleTitle || fileNameFromPath(doc.path) || doc.path
+  const markdownActionsAvailable = isMd && result?.kind === 'ok'
 
   const copyMarkdown = async (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
@@ -383,60 +392,118 @@ function DocBlock({
     URL.revokeObjectURL(url)
   }
 
-  const header = (
-    <div className="flex items-center gap-1 bg-bg-tertiary/25 hover:bg-bg-tertiary/50 transition-colors">
+  const actionButtons = isMd ? (
+    <div className="shrink-0 flex items-center gap-1">
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        className="min-w-0 flex-1 px-4 py-3 flex items-center gap-2.5 text-left"
+        onClick={copyMarkdown}
+        disabled={!markdownActionsAvailable}
+        title={copied ? t('inbox.docCopiedMarkdown') : t('inbox.docCopyMarkdown')}
+        aria-label={copied ? t('inbox.docCopiedMarkdown') : t('inbox.docCopyMarkdown')}
+        className="inline-flex h-7 w-7 items-center justify-center rounded text-text-muted/65 transition-colors hover:bg-bg-tertiary hover:text-accent disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted/65"
       >
-        <ChevronRight
-          size={15}
-          strokeWidth={2}
-          aria-hidden
-          className={`shrink-0 text-text-muted/70 transition-transform ${expanded ? 'rotate-90' : ''}`}
-        />
-        <span className="text-[12px]">📄</span>
-        <span className="flex-1 truncate text-[12px] font-mono text-text-muted">{doc.path}</span>
-        <span className="shrink-0 text-[10px] uppercase tracking-wider text-text-muted/45">
-          {expanded ? t('inbox.docCollapse') : t('inbox.docExpand')}
-        </span>
+        {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={1.75} />}
       </button>
-      {isMarkdownPath(doc.path) && (
-        <div className="shrink-0 flex items-center gap-1 pr-3">
-          <button
-            type="button"
-            onClick={copyMarkdown}
-            disabled={!markdownActionsAvailable}
-            title={copied ? t('inbox.docCopiedMarkdown') : t('inbox.docCopyMarkdown')}
-            aria-label={copied ? t('inbox.docCopiedMarkdown') : t('inbox.docCopyMarkdown')}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-text-muted/65 transition-colors hover:bg-bg-tertiary hover:text-accent disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted/65"
-          >
-            {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={1.75} />}
-          </button>
-          <button
-            type="button"
-            onClick={downloadMarkdown}
-            disabled={!markdownActionsAvailable}
-            title={t('inbox.docDownloadMarkdown')}
-            aria-label={t('inbox.docDownloadMarkdown')}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-text-muted/65 transition-colors hover:bg-bg-tertiary hover:text-accent disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted/65"
-          >
-            <Download size={14} strokeWidth={1.75} />
-          </button>
-        </div>
-      )}
+      <button
+        type="button"
+        onClick={downloadMarkdown}
+        disabled={!markdownActionsAvailable}
+        title={t('inbox.docDownloadMarkdown')}
+        aria-label={t('inbox.docDownloadMarkdown')}
+        className="inline-flex h-7 w-7 items-center justify-center rounded text-text-muted/65 transition-colors hover:bg-bg-tertiary hover:text-accent disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted/65"
+      >
+        <Download size={14} strokeWidth={1.75} />
+      </button>
     </div>
-  )
+  ) : null
 
+  // Markdown reports: article layout — body visible by default, light chrome.
+  if (isMd) {
+    return (
+      <article className="pt-4">
+        <div className="flex items-center gap-2 mb-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="min-w-0 flex-1 flex items-center gap-2 text-left group"
+          >
+            <ChevronRight
+              size={14}
+              strokeWidth={2}
+              aria-hidden
+              className={`shrink-0 text-text-muted/50 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-semibold text-text truncate group-hover:text-accent transition-colors">
+                {result === null && !articleTitle ? t('common.loading') : displayName}
+              </div>
+              {articleTitle && (
+                <div className="text-[11px] font-mono text-text-muted/50 truncate" title={doc.path}>
+                  {fileNameFromPath(doc.path)}
+                </div>
+              )}
+            </div>
+            <span className="shrink-0 text-[10px] uppercase tracking-wider text-text-muted/40">
+              {expanded ? t('inbox.docCollapse') : t('inbox.docExpand')}
+            </span>
+          </button>
+          {actionButtons}
+        </div>
+        {expanded && (
+          <div className="pl-0 sm:pl-5">
+            {result === null ? (
+              <div className="text-[12px] text-text-muted">{t('common.loading')}</div>
+            ) : result.kind === 'ok' && articleTitle ? (
+              <FileContentView
+                path={doc.path}
+                result={{ ...result, content: stripFirstMarkdownH1(result.content) }}
+                variant="article"
+              />
+            ) : (
+              <FileContentView path={doc.path} result={result} variant="article" />
+            )}
+          </div>
+        )}
+        {!expanded && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="block w-full text-left pl-5 text-[13px] leading-relaxed text-text-muted/70 hover:text-text-muted transition-colors"
+          >
+            <span className="line-clamp-2">
+              {result === null ? t('common.loading') : preview || t('inbox.docNoPreview')}
+            </span>
+          </button>
+        )}
+      </article>
+    )
+  }
+
+  // Non-markdown: keep the compact attachment card.
   return (
     <div className="rounded-lg border border-border bg-bg/50 overflow-hidden">
       <div>
-        {header}
-        {/* Collapsed: a short text preview so the card reads as openable
-         *  content rather than a bare filename. Hidden once expanded (the
-         *  full render takes over below). */}
+        <div className="flex items-center gap-1 bg-bg-tertiary/25 hover:bg-bg-tertiary/50 transition-colors">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="min-w-0 flex-1 px-4 py-3 flex items-center gap-2.5 text-left"
+          >
+            <ChevronRight
+              size={15}
+              strokeWidth={2}
+              aria-hidden
+              className={`shrink-0 text-text-muted/70 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            />
+            <span className="text-[12px]">📄</span>
+            <span className="flex-1 truncate text-[12px] font-mono text-text-muted">{doc.path}</span>
+            <span className="shrink-0 text-[10px] uppercase tracking-wider text-text-muted/45">
+              {expanded ? t('inbox.docCollapse') : t('inbox.docExpand')}
+            </span>
+          </button>
+        </div>
         {!expanded && (
           <button
             type="button"
@@ -444,7 +511,7 @@ function DocBlock({
             className="block w-full text-left bg-bg-tertiary/25 hover:bg-bg-tertiary/50 transition-colors pl-11 pr-4 pb-3 -mt-1.5 text-[12px] leading-relaxed text-text-muted/70"
           >
             <span className="line-clamp-2">
-            {result === null ? t('common.loading') : preview || t('inbox.docNoPreview')}
+              {result === null ? t('common.loading') : preview || t('inbox.docNoPreview')}
             </span>
           </button>
         )}
@@ -468,6 +535,20 @@ function isMarkdownPath(path: string): boolean {
 
 function fileNameFromPath(path: string): string {
   return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? ''
+}
+
+/** First ATX H1 in the doc, if any — used as the article display title. */
+function extractMarkdownTitle(content: string): string | null {
+  const m = /^(?:\uFEFF)?#\s+(.+)$/m.exec(content)
+  if (!m?.[1]) return null
+  const title = m[1].trim().replace(/\s+#+\s*$/, '')
+  return title.length > 0 ? title : null
+}
+
+/** Drop the first ATX H1 (+ following blank lines) so the article chrome
+ *  can own the title without duplicating it in the body. */
+function stripFirstMarkdownH1(content: string): string {
+  return content.replace(/^(?:\uFEFF)?#\s+.+(?:\r?\n)+/, '')
 }
 
 async function copyText(text: string): Promise<void> {

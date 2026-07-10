@@ -16,6 +16,7 @@ import { claudeAdapter } from './claude.js';
 import { codexAdapter } from './codex.js';
 import { opencodeAdapter } from './opencode.js';
 import { piAdapter } from './pi.js';
+import { shellAdapter } from './shell.js';
 
 let dir: string;
 
@@ -285,11 +286,20 @@ describe('assignsSessionId capability (gates the launcher\'s assign-id-at-spawn 
 describe('composeHeadlessCommand (one-shot headless argv, prompt placed per-CLI)', () => {
   const ctx = (env: Record<string, string> = {}) => ({ cwd: '/ws', env });
 
-  it('all four agent adapters declare the headless capability', () => {
+  it('agent adapters + shell declare the headless capability', () => {
     expect(claudeAdapter.capabilities.headless).toBe(true);
     expect(codexAdapter.capabilities.headless).toBe(true);
     expect(opencodeAdapter.capabilities.headless).toBe(true);
     expect(piAdapter.capabilities.headless).toBe(true);
+    expect(shellAdapter.capabilities.headless).toBe(true);
+  });
+
+  it('shell: login shell -lc <script> (zero-LLM automation path)', () => {
+    expect(shellAdapter.composeHeadlessCommand!([], ctx(), 'node work/run.mjs')).toEqual([
+      process.env['SHELL'] ?? '/bin/sh',
+      '-lc',
+      'node work/run.mjs',
+    ]);
   });
 
   it('claude: -p stream-json --verbose -- <prompt> (prompt after -- terminator, never --bare)', () => {
@@ -300,6 +310,8 @@ describe('composeHeadlessCommand (one-shot headless argv, prompt placed per-CLI)
       'claude',
       '--settings',
       '{"enableAllProjectMcpServers":true}',
+      '--permission-mode',
+      'bypassPermissions',
       '-p',
       '--output-format',
       'stream-json',
@@ -373,6 +385,34 @@ describe('piAdapter AI-config', () => {
       .toEqual(['pi', '--session-id', 'sess-1']);
   });
 
+  it('composeCommand uses managed Pi binary path when the spawn env provides one', () => {
+    const env = { ...mcpEnv, OPENALICE_MANAGED_PI_PATH: '/app/vendor/pi/pi' };
+    expect(piAdapter.composeCommand(['ignored'], { cwd: dir, env })).toEqual(['/app/vendor/pi/pi']);
+    expect(piAdapter.composeHeadlessCommand!([], { cwd: dir, env }, 'hello')).toEqual([
+      '/app/vendor/pi/pi', '-p', '--mode', 'json', 'hello',
+    ]);
+  });
+
+  it('composeCommand runs managed Pi npm runtime through the injected Node path', () => {
+    const env = {
+      ...mcpEnv,
+      OPENALICE_MANAGED_PI_PATH: '/app/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
+      OPENALICE_MANAGED_PI_NODE_PATH: '/Applications/OpenAlice.app/Contents/MacOS/OpenAlice',
+    };
+    expect(piAdapter.composeCommand(['ignored'], { cwd: dir, env })).toEqual([
+      '/Applications/OpenAlice.app/Contents/MacOS/OpenAlice',
+      '/app/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
+    ]);
+    expect(piAdapter.composeHeadlessCommand!([], { cwd: dir, env }, 'hello')).toEqual([
+      '/Applications/OpenAlice.app/Contents/MacOS/OpenAlice',
+      '/app/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
+      '-p',
+      '--mode',
+      'json',
+      'hello',
+    ]);
+  });
+
   it('composeEnv sets PI_OFFLINE always; PI_CODING_AGENT_DIR only in override mode', async () => {
     // No .pi-agent yet → no redirect.
     const before = piAdapter.composeEnv!({ cwd: dir, env: mcpEnv });
@@ -403,6 +443,26 @@ describe('piAdapter AI-config', () => {
       defaultProvider: 'workspace',
       defaultModel: 'deepseek-chat',
     });
+  });
+
+  it('writes managed shellPath into Pi settings when the runtime profile provides one', async () => {
+    const shellPath = join(dir, 'managed-bash');
+    await writeFile(shellPath, '');
+    const before = process.env['OPENALICE_MANAGED_SHELL_PATH'];
+    process.env['OPENALICE_MANAGED_SHELL_PATH'] = shellPath;
+    try {
+      await piAdapter.writeAiConfig!(dir, {
+        baseUrl: 'https://cn.test/v1', apiKey: 'sk-p', model: 'deepseek-chat',
+      });
+      expect(JSON.parse(await read('.pi-agent/settings.json'))).toEqual({
+        defaultProvider: 'workspace',
+        defaultModel: 'deepseek-chat',
+        shellPath,
+      });
+    } finally {
+      if (before === undefined) delete process.env['OPENALICE_MANAGED_SHELL_PATH'];
+      else process.env['OPENALICE_MANAGED_SHELL_PATH'] = before;
+    }
   });
 
   it('writes an explicit custom-model context window for Pi when provided', async () => {
