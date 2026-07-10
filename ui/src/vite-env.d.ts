@@ -10,6 +10,10 @@ declare const __OPENALICE_DEV_BACKEND_PORT__: number
 
 interface ImportMetaEnv {
   readonly VITE_DEMO_MODE?: string
+  readonly VITE_OPENALICE_FIRST_RUN_GUIDE?: string
+  readonly VITE_OPENALICE_ONBOARDING_TEST?: string
+  readonly VITE_OPENALICE_CREDENTIAL_TEST_MODE?: string
+  readonly VITE_OPENALICE_ONBOARDING_STORAGE_SUFFIX?: string
 }
 
 interface ImportMeta {
@@ -27,7 +31,7 @@ interface Window {
       info(): Promise<{
         mode: 'electron-dev' | 'electron-packaged'
         transport: 'electron-ipc'
-        ports: { web: number | null; mcp: number | null; uta: number }
+        ports: { web: number | null; mcp: number | null; uta: number | null }
         userDataHome: string
         appHome: string
       }>

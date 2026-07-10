@@ -135,7 +135,57 @@ export const marketApi = {
     balance: (symbol: string) => equityEndpoint<FinancialStatementRow>('balance', { symbol }),
     income: (symbol: string) => equityEndpoint<FinancialStatementRow>('income', { symbol }),
     cashflow: (symbol: string) => equityEndpoint<FinancialStatementRow>('cash', { symbol }),
+    insiders: (symbol: string, limit = 30) =>
+      equityEndpoint<InsiderTradeRow>('insiders', { symbol, limit }),
   },
+
+  /**
+   * Fixed-universe Form 4 tape (SOXX + DRAM). Served from Alice's once-per-day
+   * disk cache — first hit of the ET day refreshes upstream; later hits are fast.
+   */
+  async insidersTape(opts: { refresh?: boolean; limitPerSymbol?: number } = {}): Promise<InsidersTapeResponse> {
+    const qs = new URLSearchParams()
+    if (opts.refresh) qs.set('refresh', '1')
+    if (opts.limitPerSymbol != null) qs.set('limitPerSymbol', String(opts.limitPerSymbol))
+    const q = qs.toString()
+    return fetchJson(`/api/market/insiders-tape${q ? `?${q}` : ''}`)
+  },
+}
+
+/** Form 4 / insider row — fields vary by provider; panels pick what they need. */
+export type InsiderTradeRow = {
+  symbol?: string | null
+  filing_date?: string | null
+  transaction_date?: string | null
+  owner_name?: string | null
+  owner_title?: string | null
+  ownership_type?: string | null
+  transaction_type?: string | null
+  acquisition_or_disposition?: string | null
+  securities_transacted?: number | null
+  transaction_price?: number | null
+  filing_url?: string | null
+  [key: string]: unknown
+}
+
+export interface InsidersTapeResponse {
+  dateKey?: string
+  asOf: string
+  cachedAt?: string
+  universeId?: string
+  universe?: string
+  symbols: string[]
+  trades: InsiderTradeRow[]
+  errors: Array<{ symbol: string; error: string | null }>
+  meta?: {
+    origin?: string
+    provider?: string
+    asOf?: string
+    cachedAt?: string
+    stale?: boolean
+    limitPerSymbol?: number
+  }
+  error?: string
 }
 
 // ==================== Federated bars (multi-source K-lines) ====================

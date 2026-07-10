@@ -12,16 +12,20 @@ import { AutomationPage } from '../pages/AutomationPage'
 import { NewsPage } from '../pages/NewsPage'
 import { MarketPage } from '../pages/MarketPage'
 import { MarketRotationPage } from '../pages/MarketRotationPage'
+import { MarketInsidersPage } from '../pages/MarketInsidersPage'
 import { MarketBoardPage } from '../pages/MarketBoardPage'
 import { MARKET_BOARD_TITLES } from '../pages/market-board-titles'
 import { MarketDetailPage } from '../pages/MarketDetailPage'
 import { SettingsPage } from '../pages/SettingsPage'
+import { AgentPermissionsPage } from '../pages/AgentPermissionsPage'
 import { AIProviderPage } from '../pages/AIProviderPage'
 import { TradingPage } from '../pages/TradingPage'
 import { MCPPage } from '../pages/MCPPage'
 import { MarketDataPage } from '../pages/MarketDataPage'
 import { NewsCollectorPage } from '../pages/NewsCollectorPage'
 import { UTADetailPage } from '../pages/UTADetailPage'
+import { OnboardingDesignPage } from '../pages/OnboardingDesignPage'
+import { DesignProjectPage } from '../pages/DesignProjectPage'
 import { DevPage } from '../pages/DevPage'
 import { InboxPage } from '../pages/InboxPage'
 import { InboxPageShell } from '../pages/InboxPageShell'
@@ -41,6 +45,7 @@ import { DevCategoryList } from '../components/DevCategoryList'
 import { MarketSidebar } from '../components/MarketSidebar'
 import { PortfolioSidebar } from '../components/PortfolioSidebar'
 import { AutomationSidebar } from '../components/AutomationSidebar'
+import { getDesignProject } from '../design/projects'
 
 /**
  * Central registry mapping each ViewKind to its render component and URL
@@ -205,6 +210,22 @@ const marketRotationModule: ViewModule<'market-rotation'> = {
   ),
 }
 
+const marketInsidersModule: ViewModule<'market-insiders'> = {
+  kind: 'market-insiders',
+  title: () => 'Insider Tape',
+  toUrl: () => '/market/insiders',
+  Component: () => (
+    <PageSidebarShell
+      storageKey="market"
+      titleKey="nav.item.market"
+      defaultWidth={300}
+      sidebar={<MarketSidebar />}
+    >
+      <MarketInsidersPage />
+    </PageSidebarShell>
+  ),
+}
+
 const marketBoardModule: ViewModule<'market-board'> = {
   kind: 'market-board',
   title: (spec) => MARKET_BOARD_TITLES[spec.params.board],
@@ -245,6 +266,7 @@ const settingsCategoryTitle: Record<
 > = {
   general: 'Settings',
   'ai-provider': 'AI Provider',
+  'agent-permissions': 'Agent Permissions',
   trading: 'Trading',
   issues: 'Issues',
   mcp: 'MCP Server',
@@ -256,6 +278,7 @@ function SettingsRouter({ spec }: ViewProps<'settings'>) {
   switch (spec.params.category) {
     case 'general': return <SettingsPage />
     case 'ai-provider': return <AIProviderPage />
+    case 'agent-permissions': return <AgentPermissionsPage />
     case 'trading': return <TradingPage />
     case 'issues': return <IssueSettingsPage />
     case 'mcp': return <MCPPage />
@@ -299,8 +322,23 @@ const utaDetailModule: ViewModule<'uta-detail'> = {
   ),
 }
 
+const onboardingModule: ViewModule<'onboarding'> = {
+  kind: 'onboarding',
+  title: () => 'Onboarding',
+  toUrl: () => '/onboarding',
+  Component: () => <OnboardingDesignPage />,
+}
+
+const designProjectModule: ViewModule<'design-project'> = {
+  kind: 'design-project',
+  title: (spec) => getDesignProject(spec.params.project)?.title ?? `Design: ${spec.params.project}`,
+  toUrl: (spec) => `/design/${encodeURIComponent(spec.params.project)}`,
+  Component: ({ spec }) => <DesignProjectPage spec={spec} />,
+}
+
 const devTabTitle: Record<Extract<ViewSpec, { kind: 'dev' }>['params']['tab'], string> = {
   tools: 'Tools',
+  onboarding: 'Onboarding',
   snapshots: 'Snapshots',
   logs: 'Logs',
   simulator: 'Simulator',
@@ -480,10 +518,13 @@ const VIEWS = {
   news: newsModule,
   'market-list': marketListModule,
   'market-rotation': marketRotationModule,
+  'market-insiders': marketInsidersModule,
   'market-board': marketBoardModule,
   'market-detail': marketDetailModule,
   settings: settingsModule,
   'uta-detail': utaDetailModule,
+  onboarding: onboardingModule,
+  'design-project': designProjectModule,
   dev: devModule,
   inbox: inboxModule,
   tracked: trackedModule,
