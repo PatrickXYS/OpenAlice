@@ -26,10 +26,8 @@ export function UrlAdopter() {
   return (
     <>
       <Routes>
-        {/* Root → Ask Alice. An AI product should open on how-to-use-it (the
-            chat front door), not an information summary (Inbox is task sync, à
-            la Linear — but Linear's comms live in Slack; ours live here). */}
-        <Route path="/" element={<Navigate to="/chat" replace />} />
+        {/* Root → Decision Home (act-today front door). */}
+        <Route path="/" element={<Navigate to="/home" replace />} />
         <Route path="/onboarding" element={<AdoptStatic spec={{ kind: 'onboarding', params: {} }} />} />
         <Route path="/design/:project" element={<AdoptDesignProject />} />
 
@@ -37,6 +35,7 @@ export function UrlAdopter() {
         {/* /chat → the "Ask Alice" quick-chat landing (composer). Legacy
             /chat/:channelId (the retired traditional-chat channels) still
             redirects to Inbox so stale bookmarks land on a live surface. */}
+        <Route path="/home" element={<AdoptStatic spec={{ kind: 'home', params: {} }} />} />
         <Route path="/chat" element={<AdoptStatic spec={{ kind: 'chat-landing', params: {} }} />} />
         <Route path="/chat/workspaces/:wsId" element={<AdoptChatWorkspace />} />
         <Route path="/chat/workspaces/:wsId/s/:sessionId" element={<AdoptChatWorkspace />} />
@@ -111,8 +110,8 @@ export function UrlAdopter() {
         <Route path="/tools" element={<Navigate to="/settings" replace />} />
         <Route path="/uta/:id" element={<RedirectUtaDetail />} />
 
-        {/* Unknown URL → Inbox */}
-        <Route path="*" element={<Navigate to="/inbox" replace />} />
+        {/* Unknown URL → Decision Home */}
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
       <UrlSync />
     </>
@@ -199,7 +198,7 @@ function AdoptDev() {
 
 function AdoptAutomation() {
   const { section } = useParams<{ section: string }>()
-  const valid: ReadonlyArray<string> = ['runs', 'api', 'flow', 'webhook']
+  const valid: ReadonlyArray<string> = ['runs', 'api']
   if (!section || !valid.includes(section)) return <Navigate to="/automation/runs" replace />
   return (
     <AdoptStatic
@@ -263,6 +262,7 @@ function RedirectUtaDetail() {
  */
 function specToSection(spec: ViewSpec): ActivitySection {
   switch (spec.kind) {
+    case 'home':               return 'home'
     case 'inbox':              return 'inbox'
     case 'tracked':            return 'tracked'
     case 'tracked-issue-detail': return 'tracked'

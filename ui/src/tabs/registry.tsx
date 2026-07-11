@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import type { Workspace } from '../components/workspace/api'
 import type { ViewKind, ViewSpec } from './types'
 
+import { DecisionHomePage } from '../pages/DecisionHomePage'
 import { PortfolioPage } from '../pages/PortfolioPage'
 import { TradingAsGitPage } from '../pages/TradingAsGitPage'
 import { IssuePage } from '../pages/IssuePage'
@@ -90,6 +91,13 @@ export interface ViewModule<K extends ViewKind> {
 
 // ==================== Per-kind modules ====================
 
+const homeModule: ViewModule<'home'> = {
+  kind: 'home',
+  title: () => 'Home',
+  toUrl: () => '/home',
+  Component: () => <DecisionHomePage />,
+}
+
 const portfolioModule: ViewModule<'portfolio'> = {
   kind: 'portfolio',
   title: () => 'Portfolio',
@@ -151,8 +159,6 @@ const automationSectionTitle: Record<
 > = {
   runs: 'Runs',
   api: 'API',
-  flow: 'Flow',
-  webhook: 'Webhook',
 }
 
 const automationModule: ViewModule<'automation'> = {
@@ -509,6 +515,7 @@ const fileViewerModule: ViewModule<'file-viewer'> = {
 // ==================== Aggregate ====================
 
 const VIEWS = {
+  home: homeModule,
   portfolio: portfolioModule,
   'trading-as-git': tradingAsGitModule,
   issue: issueModule,

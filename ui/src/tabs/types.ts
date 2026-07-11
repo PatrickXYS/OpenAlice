@@ -25,7 +25,7 @@ export type ViewSpec =
   | { kind: 'issue';          params: Record<string, never> }
   | { kind: 'issue-detail';   params: { wsId: string; id: string } }
   | { kind: 'tracked-issue-detail'; params: { wsId: string; id: string } }
-  | { kind: 'automation';     params: { section: 'runs' | 'api' | 'flow' | 'webhook' } }
+  | { kind: 'automation';     params: { section: 'runs' | 'api' } }
   | { kind: 'news';           params: Record<string, never> }
   | { kind: 'market-list';    params: Record<string, never> }
   | { kind: 'market-rotation'; params: Record<string, never> }
@@ -37,6 +37,7 @@ export type ViewSpec =
   | { kind: 'onboarding';     params: Record<string, never> }
   | { kind: 'design-project'; params: { project: string } }
   | { kind: 'dev';            params: { tab: 'tools' | 'onboarding' | 'snapshots' | 'logs' | 'simulator' } }
+  | { kind: 'home';                params: Record<string, never> }
   | { kind: 'inbox';               params: Record<string, never> }
   | { kind: 'tracked';             params: Record<string, never> }
   | { kind: 'chat-landing';        params: { targetWsId?: string } }
@@ -50,6 +51,7 @@ export type ViewKind = ViewSpec['kind']
  * owns them, not in the app shell.
  */
 export type ActivitySection =
+  | 'home'
   | 'chat'
   | 'inbox'
   | 'tracked'

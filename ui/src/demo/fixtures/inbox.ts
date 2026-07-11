@@ -1,5 +1,5 @@
 import type { InboxEntry, InboxOrigin } from '../../api/inbox'
-import { DEMO_WORKSPACE_ID } from './workspaces'
+import { DEMO_SESSION_ID, DEMO_WORKSPACE_ID } from './workspaces'
 
 export const DEMO_REPORT_PATH = 'research-AAPL-q1.md'
 
@@ -21,6 +21,21 @@ export const demoInboxEntry: InboxEntry = {
     '',
     'Want me to set up a watchlist alert on next quarter\'s services number?',
   ].join('\n'),
+  origin: { kind: 'interactive', sessionId: DEMO_SESSION_ID, agent: 'claude' },
+}
+
+export const demoHeadlessSessionReport: InboxEntry = {
+  id: 'demo-inbox-headless-session',
+  ts: FIVE_MIN_AGO - 60_000,
+  workspaceId: DEMO_WORKSPACE_ID,
+  workspaceLabel: 'demo',
+  comments: 'The NVDA quant snapshot is ready. Open the originating run if you want to challenge the assumptions.',
+  origin: {
+    kind: 'headless',
+    runId: 'demo-headless-1',
+    agent: 'codex',
+    agentSessionId: '019eb75e-0b1b-7fa2-ba95-fd7db4463afe',
+  },
 }
 
 // ── Headless reports tied to scheduled issues ──
@@ -83,11 +98,24 @@ export const demoMoversReportOlder: InboxEntry = {
   origin: headlessOrigin('demo-run-morning-3', 'morning-scan', 'codex'),
 }
 
+export const demoDailyDigest: InboxEntry = {
+  id: 'demo-inbox-daily-digest',
+  ts: nowMs - 30 * 60 * 1000,
+  workspaceId: DEMO_WORKSPACE_ID,
+  workspaceLabel: 'paper',
+  docs: [{ path: 'outputs/digest/daily-2026-07-10.md' }],
+  comments:
+    '每日总结 2026-07-10 — 拟平仓 GNRC；内部人告警 SELL CRDO/CRWD；标题领先 AMAT/MU/ASML — 覆盖 12 个板块',
+  origin: headlessOrigin('demo-run-daily-digest', 'daily-digest', 'shell'),
+}
+
 /** GET /api/inbox/history order — newest-first. `demoInboxEntry` (the AAPL
  *  research push) carries NO origin: the interactive/manual case, which renders
  *  without an originating-issue breadcrumb. */
 export const demoInboxEntries: InboxEntry[] = [
+  demoDailyDigest,
   demoInboxEntry,
+  demoHeadlessSessionReport,
   demoMoversReport,
   demoDigestReport,
   demoMoversReportOlder,
@@ -96,6 +124,45 @@ export const demoInboxEntries: InboxEntry[] = [
 // File contents served back to readWorkspaceFile() for demo workspace docs.
 // Keyed by relative path.
 export const demoWorkspaceFiles: Record<string, string> = {
+  'outputs/digest/daily-2026-07-10.md': `# 每日总结 · 2026-07-10
+
+_先看这篇。感兴趣的章节再点进对应报告。_
+
+## 今日要点
+
+- 拟平仓 GNRC
+- 内部人告警 SELL CRDO/SELL CRWD
+
+## 分项速览
+
+### 纸面仓位计划
+
+- 明早拟买入：**无**
+- 拟平仓：GNRC
+`,
+  'outputs/paper/pending.json': JSON.stringify(
+    {
+      version: 4,
+      status: 'pending',
+      asOf: '2026-07-10',
+      accountId: 'alpaca-demo',
+      equity: 100000,
+      marketHealth: { label: 'healthy' },
+      orders: [
+        {
+          action: 'CLOSE',
+          symbol: 'GNRC',
+          sleeve: 'cross',
+          thesis: 'dropped from Cross Top',
+        },
+      ],
+      crossEntries: [],
+      themeEntries: [],
+      filteredOut: [],
+    },
+    null,
+    2,
+  ),
   // Doc for demoMoversReport (auto-quant › morning-scan run).
   'reports/movers-2026-06-27.md': `# Pre-market movers — 2026-06-27
 
