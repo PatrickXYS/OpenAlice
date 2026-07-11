@@ -4,6 +4,7 @@ import type { Resources } from './en'
 export const ja: Resources = {
   nav: {
     item: {
+      home: 'ホーム',
       inbox: '受信トレイ',
       tracked: 'トラッキング',
       chat: 'Alice に質問',
@@ -28,6 +29,30 @@ export const ja: Resources = {
     about: '{{label}}について',
     collapseRail: 'アクティビティバーを折りたたむ',
     expandRail: 'アクティビティバーを展開',
+  },
+  home: {
+    subtitle: '今日動く必要がある？詳細はワンクリック先。',
+    actToday: '今日のアクション',
+    pendingBuys: '買い予定（翌営業日寄り）',
+    pendingCloses: '決済予定',
+    unreadInbox: '未読 Inbox',
+    none: 'なし',
+    pendingAsOf: '紙トレーディング計画 {{asOf}} · 市場 {{health}}',
+    digest: '日次ダイジェスト',
+    digestOpen: '日次ダイジェストを開く',
+    noDigest: 'まだ日次ダイジェストがありません — 夕方ジョブ後 ~14:30 PT に届きます。',
+    portfolio: 'ポートフォリオ',
+    openPortfolio: 'ポートフォリオを開く',
+    equity: '純資産',
+    cash: '現金',
+    unrealized: '含み損益',
+    noPortfolio: 'ポートフォリオデータなし（取引オフラインまたは口座未設定）。',
+    topPositions: '主な保有',
+    topPositionsIn: '主な保有 · {{label}}',
+    recentAlerts: '最近のアラート',
+    openInbox: 'Inbox を開く',
+    noAlerts: '過去1日にアラート系のプッシュはありません。',
+    unreadTag: '未読',
   },
   settings: {
     title: '設定',

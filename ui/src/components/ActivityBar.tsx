@@ -1,4 +1,4 @@
-import { type LucideIcon, MessageSquare, Inbox, Telescope, LineChart, GitBranch, BarChart3, Newspaper, Zap, Settings, Code2, TerminalSquare, ChevronDown, Info, ListChecks, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { type LucideIcon, LayoutDashboard, MessageSquare, Inbox, Telescope, LineChart, GitBranch, BarChart3, Newspaper, Zap, Settings, Code2, TerminalSquare, ChevronDown, Info, ListChecks, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { type Page } from '../App'
 import { useWorkspace } from '../tabs/store'
@@ -15,6 +15,7 @@ import { ThemeToggle } from './ThemeToggle'
  */
 function activitySectionFor(page: Page): ActivitySection {
   switch (page) {
+    case 'home':                 return 'home'
     case 'chat':                 return 'chat'
     case 'inbox':                return 'inbox'
     case 'tracked':              return 'tracked'
@@ -44,7 +45,7 @@ interface ActivityBarProps {
 // ==================== Nav item definitions ====================
 
 type NavItemKey =
-  | 'nav.item.inbox' | 'nav.item.tracked' | 'nav.item.chat' | 'nav.item.workspaces'
+  | 'nav.item.home' | 'nav.item.inbox' | 'nav.item.tracked' | 'nav.item.chat' | 'nav.item.workspaces'
   | 'nav.item.market' | 'nav.item.news' | 'nav.item.tradingAsGit' | 'nav.item.issue'
   | 'nav.item.portfolio' | 'nav.item.automation' | 'nav.item.settings' | 'nav.item.dev'
 
@@ -81,21 +82,13 @@ interface NavSection {
 
 const NAV_SECTIONS: NavSection[] = [
   // Top — primary nav, always visible (no header, not collapsible).
-  // Mental model: Chat (Ask Alice) is THE entry — for an AI product the
-  // chat surface is the front door (how you use the thing), so it sits at
-  // the very top, above Inbox (which is task sync, not the core loop).
-  // Workspaces (the all-templates index) is the power-user surface for
-  // hands-on session management; the two aren't redundant (Workspaces =
-  // whole set, Chat = chat-shape subset shortcut), but because day-to-day
-  // work rarely leaves Ask Alice, Workspaces sits at the bottom of this
-  // group rather than alongside Chat.
-  //
-  // Market / News are operational tools that work but aren't load-
-  // bearing — they live here because they don't need lifecycle
-  // labelling.
+  // Decision Home is the front door: "do I need to act today?" — then
+  // Chat / Inbox / Issues for work. Workspaces stays at the bottom of
+  // this group (power-user session management).
   {
     sectionLabel: '',
     items: [
+      { page: 'home',       labelKey: 'nav.item.home',       icon: LayoutDashboard, defaultTab: { kind: 'home', params: {} } },
       { page: 'chat',       labelKey: 'nav.item.chat',       icon: MessageSquare, defaultTab: { kind: 'chat-landing', params: {} } },
       { page: 'inbox',      labelKey: 'nav.item.inbox',      icon: Inbox, defaultTab: { kind: 'inbox', params: {} } },
       { page: 'issue',      labelKey: 'nav.item.issue',      icon: ListChecks, defaultTab: { kind: 'issue', params: {} } },

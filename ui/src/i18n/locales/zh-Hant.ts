@@ -12,6 +12,7 @@ import type { Resources } from './en'
 export const zhHant: Resources = {
   nav: {
     item: {
+      home: '首頁',
       inbox: '收件匣',
       tracked: '追蹤',
       chat: '問 Alice',
@@ -36,6 +37,30 @@ export const zhHant: Resources = {
     about: '關於{{label}}',
     collapseRail: '收合活動列',
     expandRail: '展開活動列',
+  },
+  home: {
+    subtitle: '今天要不要動手？細節一鍵可進。',
+    actToday: '今日行動',
+    pendingBuys: '擬買入（明早開盤）',
+    pendingCloses: '擬平倉',
+    unreadInbox: '未讀 Inbox',
+    none: '無',
+    pendingAsOf: '紙面計劃 {{asOf}} · 市場 {{health}}',
+    digest: '每日總結',
+    digestOpen: '打開每日總結',
+    noDigest: '還沒有每日總結 — 晚間任務跑完後約 14:30 PT 推送。',
+    portfolio: '持倉概覽',
+    openPortfolio: '打開投資組合',
+    equity: '權益',
+    cash: '現金',
+    unrealized: '浮盈虧',
+    noPortfolio: '暫無組合資料（交易離線或未設定帳戶）。',
+    topPositions: '主要持倉',
+    topPositionsIn: '主要持倉 · {{label}}',
+    recentAlerts: '近期告警',
+    openInbox: '打開 Inbox',
+    noAlerts: '近一天沒有告警類推送。',
+    unreadTag: '未讀',
   },
   settings: {
     title: '設定',

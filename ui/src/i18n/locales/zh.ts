@@ -4,6 +4,7 @@ import type { Resources } from './en'
 export const zh: Resources = {
   nav: {
     item: {
+      home: '首页',
       inbox: '收件箱',
       tracked: '追踪',
       chat: '问 Alice',
@@ -28,6 +29,30 @@ export const zh: Resources = {
     about: '关于{{label}}',
     collapseRail: '折叠活动栏',
     expandRail: '展开活动栏',
+  },
+  home: {
+    subtitle: '今天要不要动手？细节一键可进。',
+    actToday: '今日行动',
+    pendingBuys: '拟买入（明早开盘）',
+    pendingCloses: '拟平仓',
+    unreadInbox: '未读 Inbox',
+    none: '无',
+    pendingAsOf: '纸面计划 {{asOf}} · 市场 {{health}}',
+    digest: '每日总结',
+    digestOpen: '打开每日总结',
+    noDigest: '还没有每日总结 — 晚间任务跑完后约 14:30 PT 推送。',
+    portfolio: '持仓概览',
+    openPortfolio: '打开投资组合',
+    equity: '权益',
+    cash: '现金',
+    unrealized: '浮盈亏',
+    noPortfolio: '暂无组合数据（交易离线或未配置账户）。',
+    topPositions: '主要持仓',
+    topPositionsIn: '主要持仓 · {{label}}',
+    recentAlerts: '近期告警',
+    openInbox: '打开 Inbox',
+    noAlerts: '近一天没有告警类推送。',
+    unreadTag: '未读',
   },
   settings: {
     title: '设置',

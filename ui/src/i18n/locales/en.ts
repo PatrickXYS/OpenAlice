@@ -15,6 +15,7 @@
 export const en = {
   nav: {
     item: {
+      home: 'Home',
       inbox: 'Inbox',
       tracked: 'Tracked',
       chat: 'Ask Alice',
@@ -39,6 +40,30 @@ export const en = {
     about: 'About {{label}}',
     collapseRail: 'Collapse activity bar',
     expandRail: 'Expand activity bar',
+  },
+  home: {
+    subtitle: 'Do I need to act today? Details live one click away.',
+    actToday: 'Act today',
+    pendingBuys: 'Queued buys (next open)',
+    pendingCloses: 'Queued closes',
+    unreadInbox: 'Unread inbox',
+    none: 'None',
+    pendingAsOf: 'Paper plan {{asOf}} · market {{health}}',
+    digest: 'Daily digest',
+    digestOpen: 'Open daily digest',
+    noDigest: 'No daily digest yet — it posts after the evening jobs (~14:30 PT).',
+    portfolio: 'Portfolio',
+    openPortfolio: 'Open portfolio',
+    equity: 'Equity',
+    cash: 'Cash',
+    unrealized: 'Unrealized',
+    noPortfolio: 'No portfolio data (trading offline or no accounts).',
+    topPositions: 'Top positions',
+    topPositionsIn: 'Top positions · {{label}}',
+    recentAlerts: 'Recent alerts',
+    openInbox: 'Open inbox',
+    noAlerts: 'No alert-like pushes in the last day.',
+    unreadTag: 'unread',
   },
   settings: {
     title: 'Settings',
